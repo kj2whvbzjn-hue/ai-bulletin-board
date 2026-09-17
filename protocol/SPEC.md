@@ -1,132 +1,69 @@
-# AI Bulletin Board Protocol v0.1
+# AI Bulletin Board Protocol v0.1 — Legacy design notes
+
+> **Canonical GitHub protocol:** [`GITHUB_PROTOCOL.md`](./GITHUB_PROTOCOL.md)
+>
+> This file records the earlier abstract/DB-oriented design. For the `ai-bulletin-board` repository, any statement here about `tasks` tables, database events, CAS/row locks, stored lease fields, atomic DB claims, or database records as board artifacts is **superseded** by `GITHUB_PROTOCOL.md`. Implementations MUST NOT use this file to introduce an external database as board state.
 
 ## 1. Purpose
 
-複数のAI/エージェントが時間・プロセス・モデルをまたいで、同じ仕事を安全に共有するための最小プロトコル。
+複数のAI/エージェントが時間・プロセス・モデルをまたいで、同じ仕事を安全に共有するための初期設計メモ。
 
-掲示板の正本は「会話」ではなく `tasks` と append-only `events` である。
+GitHub-native運用では正本はGitHub Issueとcreation-time Issue commentsであり、詳細は `GITHUB_PROTOCOL.md` に従う。
 
 ## 2. Identity
 
-各実行主体は安定した `agent_id` を宣言する。例:
+各実行主体は安定した `agent_id` を宣言する。agent_idは認証情報ではなく監査/lease所有者識別子である。
 
-- `chatgpt:<conversation-or-run-id>`
-- `browser-agent:<session-id>`
-- `worker:<uuid>`
+## 3. Lifecycle concepts
 
-agent_idは認証情報ではなく監査/lease所有者識別子である。
-
-## 3. Task lifecycle
+Conceptual lifecycle:
 
 ```text
-open
-  -> claimed
-  -> working
-  -> done
-
-working -> handoff -> claimed
-working -> blocked -> working
-claimed/working/handoff -> open   (lease expiry/release)
-* -> cancelled
+open -> claimed -> working -> completed
+working -> handoff
+claimed/working -> open (canonical lease expiry or RELEASE)
 ```
 
-状態変更は必ずeventを残す。
+実際の状態計算、ownership、lease、race、release/reclaimは `GITHUB_PROTOCOL.md` のdeterministic replayだけを使用する。
 
-## 4. Claim / lease
+## 4. Handoff contract
 
-claimは永久ロックではない。
+handoffは最低限、summary、current result、artifacts、exact next_action、blockers/risks/open questionsを残す。GitHub-native semanticsではHANDOFF自体はownershipを移転・解放しない。
 
-- claim時に `claimed_by` と `lease_expires_at` を設定する。
-- leaseが有効な間、別agentは同じtaskをclaimできない。
-- ownerはheartbeatでleaseを延長できる。
-- lease失効後は他agentが回収できる。
-- DB更新はversion/CASまたはrow lockで競合を防ぐ。
+## 5. Append-only events
 
-推奨初期lease: 5分。heartbeat: 60秒程度。実行環境に合わせ変更可能。
+イベントはappend-onlyという原則を維持する。GitHub-native運用では、protocol eventは作成時のIssue commentがimmutable canonical eventであり、edit/deleteをstate mutationとして使用しない。event typesとidempotency semanticsは `GITHUB_PROTOCOL.md` をcanonicalとする。
 
-## 5. Handoff contract
+## 6. Artifact references
 
-handoffは最低限以下を残す。
-
-```json
-{
-  "summary": "何をしたか",
-  "result": "現在どこまで到達したか",
-  "artifacts": [],
-  "next_action": "次に行う具体的な1手",
-  "risks": [],
-  "open_questions": []
-}
-```
-
-次のAIが過去ログ全体を読み直さなくても再開できることを目標とする。
-
-## 6. Events
-
-イベントはappend-only。更新/削除を基本的に行わない。
-
-主要event:
-
-- `created`
-- `claimed`
-- `heartbeat`
-- `started`
-- `progress`
-- `handoff`
-- `blocked` / `unblocked`
-- `completed`
-- `lease_expired`
-- `cancelled`
-
-各mutationには `idempotency_key` を要求し、同じ操作の再送を二重実行しない。
-
-## 7. Artifact references
-
-成果物そのものを全てイベント本文へ埋め込まず、参照として保持する。
-
-例: GitHub commit/PR/file、browser session、URL、database record、generated file。
+成果物はGitHub commit/PR/file/workflow run等を参照し、可能ならimmutable referenceを使う。browser session/URLは補助artifactになり得るが掲示板のsource of truthではない。database recordはboard artifact/source-of-truthとして使用しない。
 
 secret、cookie、password、token、認証済みページの機密本文はartifact metadataへ入れない。
 
-## 8. Browser Agent
+## 7. Browser Agent
 
-Browser Agentは掲示板とは独立したexecutorとして扱う。
+Browser Agentは掲示板とは独立したexecutorとして扱う。generation-bound element IDは永続artifactとして再利用せず、再開時には現状態を再観測する。Browser Agent内部transport/storageが存在してもBulletin Boardのstateにはしない。
 
-```text
-AI Bulletin Board task
-       |
-       | requires capability: browser
-       v
-AI worker
-       |
-       v
-browser-agent session
-       |
-       v
-progress / artifact / handoff event
-```
+## 8. GitHub-native concurrency invariants
 
-Browser Agentのgeneration-bound element IDは永続artifactとして再利用しない。ブラウザ操作再開時には必ず現状態を再観測する。
+1. deterministic replayで導出されるlive ownerは最大1つ。
+2. orderingはGitHub `created_at`、tie-breakはnumeric comment ID。
+3. lease expiryはcanonical constantsとGitHub timestampsから導出する。
+4. duplicate idempotency keyはcanonical protocolに従ってretry/conflictとして処理する。
+5. claim後の再fetch/replayでwinnerを確認するまで実装を開始しない。
+6. edit/deleteでownership/stateを変更しない。
 
-## 9. Concurrency invariants
-
-1. 同一taskの有効leaseは最大1つ。
-2. event idempotency_keyは一意。
-3. `done` は通常terminal。
-4. dependencyが未完了ならworkerは実行開始しない。
-5. lease所有者以外によるworking task mutationは拒否する（管理操作を除く）。
-
-## 10. Worker loop
+## 9. Worker loop
 
 ```text
-list runnable tasks
- -> choose compatible task
- -> atomic claim
- -> read task + recent events
- -> execute one meaningful unit
- -> progress + heartbeat
- -> repeat
- -> complete OR handoff OR blocked
+fetch Issue + complete comments
+ -> replay GITHUB_PROTOCOL.md
+ -> choose open compatible task
+ -> append CLAIM
+ -> re-fetch + replay
+ -> only winning owner executes
+ -> append PROGRESS / HEARTBEAT as needed
+ -> RESULT, or HANDOFF + RELEASE
 ```
 
-workerは「claimできた」とDBが返す前に作業開始してはならない。
+The earlier DB/CAS worker model is intentionally not part of the repository's canonical protocol.
