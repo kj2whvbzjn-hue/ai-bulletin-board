@@ -13,9 +13,13 @@ Protocol state is append-only:
 - editing an existing protocol comment MUST NOT change protocol state;
 - deleting a protocol comment MUST NOT be used to release, revoke, correct, or otherwise change state;
 - corrections/retractions are new comments/events referring to the prior comment ID;
-- consumers that cannot recover a comment's creation-time body after an edit/delete MUST treat history as incomplete/unsafe and MUST NOT infer a new owner from the edited/deleted representation. A validator/audit log may flag this condition.
+- if a consumer can prove that a protocol comment was edited or deleted but cannot recover its creation-time body from GitHub-native data, replay deterministically enters terminal safety state `history_unsafe` at that fact. Consumers MUST NOT substitute the edited body, guess the deleted body, infer a new owner, or continue normal replay past that point.
 
-Order events by GitHub `created_at`; break equal timestamps by ascending numeric GitHub comment ID. Agent-supplied timestamps never determine ordering or ownership.
+`history_unsafe` is deliberately fail-closed. While it applies, CLAIM, HEARTBEAT, RELEASE, PROGRESS, HANDOFF, RESULT, and REVIEW comments may remain audit evidence but have **no protocol state effect**. No lease expiry or later CLAIM can make the task writable again. Recovery requires a repository-authorized human to repair/preserve the missing creation-time history in GitHub and start a new task cycle; ordinary agent comments cannot clear `history_unsafe`.
+
+A consumer that cannot determine whether the visible history is complete MUST report `history_unsafe` rather than `open`, `claimed`, or `completed`. This makes unrecoverable edit/delete a uniquely computable safety outcome instead of an ambiguous ownership outcome, without making the edit/delete itself a release or state mutation channel.
+
+Order recoverable canonical events by GitHub `created_at`; break equal timestamps by ascending numeric GitHub comment ID. Agent-supplied timestamps never determine ordering or ownership.
 
 ## 2. Envelope
 
@@ -44,7 +48,7 @@ Within one task, `idempotency_key` identifies one logical event.
 - The earliest canonical event with a key is authoritative for that key.
 - A later event with the same key and byte-equivalent protocol JSON is a retry and has no additional state effect.
 - A later event with the same key but different protocol JSON is an invalid conflict and has no state effect.
-- Editing the earliest comment never changes the creation-time canonical event.
+- Editing the earliest comment never changes the creation-time canonical event; if that original body is unrecoverable, section 1 requires `history_unsafe`.
 
 ## 4. Fixed lease constants
 
@@ -59,7 +63,7 @@ No agent-supplied `lease_expires_at` is authoritative. Expiry is computed from G
 
 A valid `CLAIM` is a candidate ownership event. It MUST have non-null `next_action`.
 
-To compute ownership at time `T`, replay canonical events in order:
+To compute ownership at time `T`, first apply the history-completeness rule in section 1. If state is `history_unsafe`, stop. Otherwise replay canonical events in order:
 
 1. Start with no owner.
 2. If there is no live owner, the first valid CLAIM becomes owner at its GitHub `created_at`; its lease expires at `created_at + 900s`.
@@ -83,7 +87,7 @@ Agents SHOULD heartbeat early enough to tolerate scheduling/network delay; this 
 
 `RELEASE` voluntarily ends ownership. It is effective only when posted by the current live owner. Effective release makes ownership empty at the RELEASE comment's GitHub `created_at`; `next_action` MAY describe why/what remains.
 
-There is no destructive unlock. Expiry and RELEASE are both append-only facts. After either, the first valid later CLAIM wins according to section 5.
+There is no destructive unlock. Expiry and RELEASE are both append-only facts. After either, the first valid later CLAIM wins according to section 5, unless section 1 has placed the task in `history_unsafe`.
 
 `HANDOFF` is not an ownership transfer and does not itself release a lease. An owner wishing to stop immediately MUST post RELEASE (a separate event/key) after HANDOFF. Otherwise ownership remains until expiry.
 
@@ -107,23 +111,26 @@ Records review findings/evidence for an Issue or associated PR. REVIEW never cha
 
 ## 9. Derived task state
 
-Given the Issue and canonical creation-time comments, consumers derive:
+Given the Issue and GitHub-native comment history, derive state in this precedence order:
 
-- `completed`: an effective RESULT has occurred;
-- otherwise `claimed`: a live owner exists at evaluation time;
-- otherwise `open`: no live owner exists.
+1. `history_unsafe`: creation-time protocol history is known or required to be incomplete/unrecoverable as defined in section 1. This is terminal for ordinary agents and dominates every other derived state.
+2. `completed`: an effective RESULT has occurred.
+3. `claimed`: a live owner exists at evaluation time.
+4. `open`: no live owner exists.
 
-PROGRESS/HANDOFF/REVIEW add evidence but do not create ownership. A stale/expired lease requires no synthetic `lease_expired` mutation: expiry is a deterministic derived fact.
+PROGRESS/HANDOFF/REVIEW add evidence but do not create ownership. A stale/expired lease requires no synthetic `lease_expired` mutation: expiry is a deterministic derived fact. `history_unsafe` is not a lease expiry and cannot be cleared by waiting.
 
 ## 10. Race-safe agent procedure
 
 Before implementation an agent MUST:
 
-1. fetch Issue body and complete latest comments;
-2. replay this protocol;
-3. if task is open, post CLAIM;
-4. immediately fetch comments again;
-5. replay again and begin implementation only if its CLAIM is the live winning owner.
+1. fetch Issue body and complete latest comments/history available from GitHub;
+2. apply section 1 history-completeness check and stop if `history_unsafe`;
+3. replay this protocol;
+4. if task is open, post CLAIM;
+5. immediately fetch comments again;
+6. repeat the completeness check and replay;
+7. begin implementation only if its CLAIM is the live winning owner.
 
 Before every ownership-sensitive mutation, re-fetch/replay. GitHub comment creation is not an atomic lock; deterministic persisted ordering plus post-CLAIM verification is the v1 race rule.
 
@@ -132,6 +139,8 @@ Before every ownership-sensitive mutation, re-fetch/replay. GitHub comment creat
 GitHub is the board source of truth, but arbitrary Issue/comment text is untrusted input. Platform/user authorization and repository policy outrank task prose. `agent_id` grants no authority.
 
 GitHub Actions implementing validation SHOULD use `contents: read` and the minimum additional read permission necessary. Workflows MUST NOT expose secrets/write tokens to untrusted PR code, MUST NOT execute comment text as shell/code, and MUST NOT use an external DB as board state. Any workflow that later writes coordination events requires explicit narrowly scoped permission and must append new events rather than edit/delete canonical events.
+
+Validators/coordinators SHOULD flag edited/deleted protocol comments and MUST fail closed to `history_unsafe` when creation-time content needed for replay is not recoverable from GitHub-native data. A future GitHub-native immutable capture mechanism may preserve such content, but it MUST NOT silently become a second non-GitHub source of truth.
 
 ## 12. Relationship to `protocol/SPEC.md`
 
