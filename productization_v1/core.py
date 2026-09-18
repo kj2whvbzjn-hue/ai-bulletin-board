@@ -95,10 +95,8 @@ def event_is_authorized(event:Mapping[str,Any],grants:Iterable[PrincipalGrant]|N
     if not isinstance(actor,str) or not actor: return False
     try: checked=validate_authorization_policy(policy,grants)
     except ValueError: return False
-    matching=[g for g in checked if g.principal==actor]
-    if len(matching)!=1:return False
-    g=matching[0]
-    return capability in g.capabilities and ("*" in g.scopes or scope in g.scopes)
+    matching=[g for g in checked if g.principal==actor and capability in g.capabilities]
+    return any("*" in g.scopes or scope in g.scopes for g in matching)
 
 def package_manifest(installation:Mapping[str,Any],config:Mapping[str,Any],*,supported_profile:str,components:Mapping[str,Mapping[str,str]],actions:Sequence[Mapping[str,str]],sbom_digest:str)->dict[str,Any]:
     validate_persisted_input(installation); validate_persisted_input(config)
