@@ -10,6 +10,8 @@ on:
     paths:
       - 'scripts/autonomy_ops.py'
       - 'scripts/test_autonomy_ops.py'
+      - 'scripts/lease_recovery.py'
+      - 'scripts/test_lease_recovery.py'
       - '.github/workflows/autonomy-watchdog.yml'
       - 'WORKER_BOOTSTRAP.md'
       - 'AI_INSTRUCTIONS.md'
@@ -35,6 +37,9 @@ jobs:
       - name: Run deterministic autonomy regressions
         id: autonomy_regressions
         run: python3 scripts/test_autonomy_ops.py
+      - name: Run lease recovery regressions
+        id: lease_recovery_regressions
+        run: python3 scripts/test_lease_recovery.py
       - name: Run Product/UX/E2E contract regressions
         id: product_contract_regressions
         run: python3 scripts/test_validate_product_ux_contract.py
