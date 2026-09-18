@@ -2,6 +2,8 @@ name: Deploy bulletin board Pages
 on:
   pull_request:
     paths:
+      - 'pages/**'
+      - 'scripts/test_productization_phase2_console.py'
       - 'scripts/build_pages_projection.py'
       - 'scripts/test_build_pages_projection.py'
       - 'scripts/autonomy_ops.py'
@@ -38,6 +40,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run projection replay regressions
         run: python3 scripts/test_build_pages_projection.py
+      - name: Run Productization Phase-2B console regressions
+        run: python3 scripts/test_productization_phase2_console.py
       - name: Derive sanitized autonomy snapshot
         env:
           GITHUB_TOKEN: ${{ github.token }}
