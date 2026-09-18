@@ -9,6 +9,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 _SCOPE = re.compile(r"^(?:\*|role:[a-z][a-z0-9_-]*|workstream:[a-z0-9][a-z0-9._/-]*)$")
 _SECRET_KEYS = ("secret", "token", "password", "private_key")
+_SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
 def canonical_json(value: Any) -> str:
@@ -44,11 +45,11 @@ class PrincipalGrant:
         scopes = frozenset(map(str, value.get("scopes", value.get("task_scope", ()))))
         if not scopes or any(not _SCOPE.fullmatch(scope) for scope in scopes):
             raise ValueError("grant scopes must be symbolic role/workstream scopes or *")
-        return cls(
-            principal=str(value["principal"]),
-            capabilities=frozenset(map(str, value.get("capabilities", ()))),
-            scopes=scopes,
-        )
+        principal = str(value.get("principal", ""))
+        capabilities = frozenset(map(str, value.get("capabilities", ())))
+        if not principal or not capabilities:
+            raise ValueError("grant requires mapped principal and capability")
+        return cls(principal=principal, capabilities=capabilities, scopes=scopes)
 
 
 def resolve_role(installation: Mapping[str, Any], role: str) -> int:
@@ -69,7 +70,7 @@ def event_is_authorized(
     scope: str,
 ) -> bool:
     """Decide state effect; unauthorized marker events remain audit-visible upstream."""
-    if not _SCOPE.fullmatch(scope) or scope.startswith("#"):
+    if not _SCOPE.fullmatch(scope):
         return False
     actor = event.get("actor") or event.get("github_actor")
     if not isinstance(actor, str) or not actor:
@@ -89,9 +90,15 @@ def package_manifest(
     actions: Sequence[Mapping[str, str]] = (),
     package_version: str = "1",
 ) -> dict[str, Any]:
-    """Build deterministic release identity and reject mutable Action references."""
+    """Build deterministic release identity and reject mutable executable identities."""
     validate_persisted_input(installation)
     validate_persisted_input(config)
+    normalized_components = []
+    for component in components:
+        item = dict(component)
+        if not item.get("name") or not item.get("identity") or not _SHA256.fullmatch(str(item.get("digest", ""))):
+            raise ValueError("components require name, immutable identity, and sha256 digest")
+        normalized_components.append(item)
     normalized_actions = []
     for action in actions:
         uses = str(action.get("uses", ""))
@@ -102,7 +109,7 @@ def package_manifest(
         "package_version": package_version,
         "installation_id": deterministic_identity("installation", installation),
         "config_id": deterministic_identity("config", config),
-        "components": sorted((dict(x) for x in components), key=canonical_json),
+        "components": sorted(normalized_components, key=canonical_json),
         "actions": sorted(normalized_actions, key=canonical_json),
     }
     return {**seed, "release_id": deterministic_identity("release", seed)}
@@ -113,7 +120,7 @@ def plan_single_repo_reconcile(
     config: Mapping[str, Any],
     observed: Sequence[Mapping[str, str] | str],
 ) -> list[dict[str, str]]:
-    """Return deterministic create/adopt/abort plan; never mutates GitHub."""
+    """Return deterministic create/adopt/abort changes; already-managed resources are no-ops."""
     validate_persisted_input(installation)
     validate_persisted_input(config)
     repo = installation.get("repository") or installation.get("repo")
@@ -130,11 +137,16 @@ def plan_single_repo_reconcile(
         if isinstance(item, str):
             inventory[item] = "managed"
         else:
-            inventory[str(item["path"])] = str(item.get("ownership", "foreign"))
+            path = str(item["path"])
+            if path in inventory:
+                raise ValueError(f"ambiguous observed resource: {path}")
+            inventory[path] = str(item.get("ownership", "foreign"))
     plan = []
     for path in sorted(set(required)):
         ownership = inventory.get(path)
-        op = "create" if ownership is None else "adopt" if ownership == "managed" else "abort"
+        if ownership == "managed":
+            continue
+        op = "create" if ownership is None else "adopt" if ownership == "adoptable" else "abort"
         plan.append({
             "op": op,
             "repository": repo,
