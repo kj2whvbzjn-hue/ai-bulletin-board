@@ -17,6 +17,7 @@ on:
       - 'data/product-ux-e2e/**'
       - 'pages/index.html'
       - 'scripts/test_pages_filter_events.py'
+      - 'scripts/test_pages_narrow_task_visibility.py'
 
 permissions:
   contents: read
@@ -41,6 +42,8 @@ jobs:
           done
       - name: Run Pages filter event regression
         run: python3 scripts/test_pages_filter_events.py
+      - name: Run Pages narrow task visibility regression
+        run: python3 scripts/test_pages_narrow_task_visibility.py
       - name: Derive GitHub-native autonomy snapshot
         env:
           GITHUB_TOKEN: ${{ github.token }}
