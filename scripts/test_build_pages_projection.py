@@ -164,6 +164,23 @@ assert reclaim_row["last_owner_activity_at"] == iso(T0 + timedelta(seconds=901))
 assert reclaim_row["next_action"] == "continue exact recovered SHA"
 assert reclaim_row["current_head"] == ""
 
+# A voluntary RELEASE after one reclaim ends that recovery cycle. A later normal
+# CLAIM is active, not a second reclaim, while prior expiry remains audit evidence.
+released_after_reclaim = event("RELEASE", "reclaimer", "reclaim-release", "released cleanly")
+fresh_after_release = event("CLAIM", "fresh-owner", "fresh-after-release", "new ordinary work")
+release_cycle_comments = reclaim_comments[:2] + [
+    comment(30, 904, released_after_reclaim),
+    comment(31, 905, fresh_after_release),
+]
+state, owner, last = m.replay(issue, release_cycle_comments, T0 + timedelta(seconds=906))
+release_cycle_row = m.project_row({"number": 1, "title": "Post-release claim"}, state, owner, last)
+assert (state, owner) == ("claimed", "fresh-owner")
+assert release_cycle_row["recovery_status"] == "active"
+assert release_cycle_row["reclaim_count"] == 1
+assert release_cycle_row["prior_owner"] == "lease-owner"
+assert release_cycle_row["reclaim_ref"] == "comment:27"
+assert release_cycle_row["claim_ref"] == "comment:31"
+
 # Released/completed/history_unsafe remain distinct non-authoritative diagnostics.
 state, owner, last = m.replay(
     issue,
