@@ -32,6 +32,8 @@ on:
       - 'scripts/test_evidence_action_gate.py'
       - 'scripts/rule_governance.py'
       - 'scripts/test_rule_governance.py'
+      - 'scripts/resume_bundle.py'
+      - 'scripts/test_resume_bundle.py'
 
 permissions:
   contents: read
@@ -81,6 +83,9 @@ jobs:
       - name: Run rule governance regressions
         id: rule_governance_regressions
         run: python3 scripts/test_rule_governance.py
+      - name: Run context-bounded resume regressions
+        id: resume_bundle_regressions
+        run: python3 scripts/test_resume_bundle.py
       - name: Run standing GAP_SCAN regressions
         id: gap_scan_regressions
         run: python3 scripts/test_gap_scan.py
@@ -88,7 +93,7 @@ jobs:
         if: ${{ always() }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          AI_BB_MAIN_VALIDATION_OUTCOME: ${{ steps.autonomy_regressions.outcome == 'success' && steps.evidence_action_regressions.outcome == 'success' && steps.lease_recovery_regressions.outcome == 'success' && steps.product_contract_regressions.outcome == 'success' && steps.persisted_records.outcome == 'success' && steps.pages_filter_regression.outcome == 'success' && steps.pages_narrow_task_visibility.outcome == 'success' && steps.productization_phase1_regressions.outcome == 'success' && steps.productization_phase2_projection_regressions.outcome == 'success' && steps.productization_phase2_console_regressions.outcome == 'success' && steps.gap_scan_regressions.outcome == 'success' && steps.rule_governance_regressions.outcome == 'success' && 'success' || 'failure' }}
+          AI_BB_MAIN_VALIDATION_OUTCOME: ${{ steps.autonomy_regressions.outcome == 'success' && steps.evidence_action_regressions.outcome == 'success' && steps.lease_recovery_regressions.outcome == 'success' && steps.product_contract_regressions.outcome == 'success' && steps.persisted_records.outcome == 'success' && steps.pages_filter_regression.outcome == 'success' && steps.pages_narrow_task_visibility.outcome == 'success' && steps.productization_phase1_regressions.outcome == 'success' && steps.productization_phase2_projection_regressions.outcome == 'success' && steps.productization_phase2_console_regressions.outcome == 'success' && steps.gap_scan_regressions.outcome == 'success' && steps.rule_governance_regressions.outcome == 'success' && steps.resume_bundle_regressions.outcome == 'success' && 'success' || 'failure' }}
         run: python3 scripts/autonomy_ops.py --output autonomy.json
       - name: Upload read-only autonomy snapshot
         if: ${{ always() }}

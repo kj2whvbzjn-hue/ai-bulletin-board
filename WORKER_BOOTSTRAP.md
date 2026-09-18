@@ -26,6 +26,19 @@ At the start of every cycle, boot, context loss, or `再開`:
 
 Never resume from a remembered `next_action` without this refresh.
 
+### Context-bounded default working set
+
+Ordinary boot/resume should reconstruct the minimum sufficient current state instead of repeatedly carrying resolved history in chat context. After the Rule refresh, keep the default working set bounded to:
+
+- the exact current-main rule refs above;
+- the latest Human Owner / #16 directive, plus the latest #19 directive only when review is relevant;
+- open/active Issues and PRs needed for queue selection, including exact heads/checks/reviews and executable next gates;
+- the full canonical body/events only for the target Issue that may be touched.
+
+Resolved/completed/closed work is historical evidence and stays on GitHub. Do not load its full payload by default; retrieve it on demand when an active blocker, acceptance criterion, safety/history check, recovery decision, or explicit audit references it. Before every ownership-sensitive mutation, full replay of the target Issue remains mandatory, and `history_unsafe`, safety, exact-head review, recovery, and post-merge validation gates are never weakened by context bounding.
+
+A compact resume receipt may be derived with `scripts/resume_bundle.py`, but it is a **non-authoritative, worker-private, ephemeral projection**. It must bind freshness to the exact main SHA and immutable rule/directive refs, whitelist active-queue fields, omit resolved-history payloads, and never be published to Pages or used instead of canonical GitHub replay. Use immutable references to index large history and fetch the underlying GitHub evidence only when required.
+
 ## 2. Duplicate/admission gate
 
 Before creating any Issue, search existing canonical workstreams.
