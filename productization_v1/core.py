@@ -30,30 +30,57 @@ def validate_persisted_input(value:Any,path:str="$")->None:
 
 @dataclass(frozen=True)
 class PrincipalGrant:
-    principal:str
-    capabilities:frozenset[str]
-    scopes:frozenset[str]
-    @classmethod
-    def from_mapping(cls,value:Mapping[str,Any])->"PrincipalGrant":
-        scopes=frozenset(map(str,value.get("scopes",value.get("task_scope",()))))
-        if not scopes or any(not _SCOPE.fullmatch(s) for s in scopes): raise ValueError("grant scopes must be symbolic role/workstream scopes or *")
-        principal=str(value.get("principal",value.get("principal_id","")))
-        capabilities=frozenset(map(str,value.get("capabilities",())))
-        if not principal or not capabilities: raise ValueError("grant requires mapped principal and capability")
-        return cls(principal,capabilities,scopes)
+    principal: str
+    capabilities: frozenset[str]
+    scopes: frozenset[str]
 
-def validate_authorization_policy(policy:Mapping[str,Any],grants:Iterable[PrincipalGrant])->tuple[PrincipalGrant,...]:
-    principals=policy.get("principals")
-    if not isinstance(principals,Mapping): raise ValueError("authorization policy requires principals mapping")
-    checked=[]
-    for grant in grants:
-        declared=principals.get(grant.principal)
-        if not isinstance(declared,Mapping): raise ValueError(f"unmapped principal: {grant.principal}")
-        capabilities=declared.get("capabilities")
-        if not isinstance(capabilities,list) or not set(grant.capabilities).issubset(set(map(str,capabilities))):
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> "PrincipalGrant":
+        principal = str(value.get("principal_id", value.get("principal", "")))
+        if "capability" in value:
+            capabilities = frozenset({str(value["capability"])})
+        else:
+            capabilities = frozenset(map(str, value.get("capabilities", ())))
+        raw_scope = value.get("task_scope", value.get("scopes", ()))
+        scopes = frozenset({raw_scope}) if isinstance(raw_scope, str) else frozenset(map(str, raw_scope))
+        if not principal or not capabilities or not scopes or any(not _SCOPE.fullmatch(scope) for scope in scopes):
+            raise ValueError("grant requires principal_id, capability, and symbolic task_scope")
+        return cls(principal, capabilities, scopes)
+
+def grants_from_authorization_policy(policy: Mapping[str, Any]) -> tuple[PrincipalGrant, ...]:
+    principals = policy.get("principals")
+    records = policy.get("state_effect_grants")
+    if not isinstance(principals, list) or not isinstance(records, list):
+        raise ValueError("authorization policy requires principals and state_effect_grants arrays")
+    declared: dict[str, frozenset[str]] = {}
+    for principal in principals:
+        if not isinstance(principal, Mapping):
+            raise ValueError("principal record must be an object")
+        principal_id = str(principal.get("principal_id", ""))
+        capabilities = principal.get("capabilities")
+        if not principal_id or principal_id in declared or not isinstance(capabilities, list):
+            raise ValueError("invalid or duplicate principal")
+        declared[principal_id] = frozenset(map(str, capabilities))
+    checked = []
+    for record in records:
+        if not isinstance(record, Mapping):
+            raise ValueError("grant record must be an object")
+        grant = PrincipalGrant.from_mapping(record)
+        if grant.principal not in declared:
+            raise ValueError(f"unmapped principal: {grant.principal}")
+        if not grant.capabilities.issubset(declared[grant.principal]):
             raise ValueError(f"grant capability exceeds principal policy: {grant.principal}")
         checked.append(grant)
     return tuple(checked)
+
+def validate_authorization_policy(policy: Mapping[str, Any], grants: Iterable[PrincipalGrant] | None = None) -> tuple[PrincipalGrant, ...]:
+    policy_grants = grants_from_authorization_policy(policy)
+    if grants is None:
+        return policy_grants
+    supplied = tuple(grants)
+    if supplied != policy_grants:
+        raise ValueError("supplied grants do not match authorization policy")
+    return supplied
 
 def resolve_role(installation:Mapping[str,Any],role:str)->int:
     roles=installation.get("roles")
@@ -62,7 +89,7 @@ def resolve_role(installation:Mapping[str,Any],role:str)->int:
     if not isinstance(value,int): raise ValueError(f"ambiguous symbolic role mapping: {role}")
     return value
 
-def event_is_authorized(event:Mapping[str,Any],grants:Iterable[PrincipalGrant],*,capability:str,scope:str,policy:Mapping[str,Any])->bool:
+def event_is_authorized(event:Mapping[str,Any],grants:Iterable[PrincipalGrant]|None=None,*,capability:str,scope:str,policy:Mapping[str,Any])->bool:
     if not _SCOPE.fullmatch(scope): return False
     actor=event.get("actor") or event.get("github_actor")
     if not isinstance(actor,str) or not actor: return False
