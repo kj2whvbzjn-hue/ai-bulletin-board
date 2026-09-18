@@ -21,6 +21,7 @@ on:
       - 'data/product-ux-e2e/**'
       - 'pages/index.html'
       - 'scripts/test_pages_filter_events.py'
+      - 'scripts/test_pages_narrow_task_visibility.py'
       - 'productization_v1/**'
       - 'scripts/test_productization_phase1.py'
       - 'scripts/gap_scan.py'
@@ -61,6 +62,9 @@ jobs:
       - name: Run Pages filter event regression
         id: pages_filter_regression
         run: python3 scripts/test_pages_filter_events.py
+      - name: Run Pages narrow task visibility regression
+        id: pages_narrow_task_visibility
+        run: python3 scripts/test_pages_narrow_task_visibility.py
       - name: Run Productization Phase-1 core regressions
         id: productization_phase1_regressions
         run: python3 scripts/test_productization_phase1.py
@@ -71,7 +75,7 @@ jobs:
         if: ${{ always() }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          AI_BB_MAIN_VALIDATION_OUTCOME: ${{ steps.autonomy_regressions.outcome == 'success' && steps.evidence_action_regressions.outcome == 'success' && steps.lease_recovery_regressions.outcome == 'success' && steps.product_contract_regressions.outcome == 'success' && steps.persisted_records.outcome == 'success' && steps.pages_filter_regression.outcome == 'success' && steps.productization_phase1_regressions.outcome == 'success' && steps.gap_scan_regressions.outcome == 'success' && 'success' || 'failure' }}
+          AI_BB_MAIN_VALIDATION_OUTCOME: ${{ steps.autonomy_regressions.outcome == 'success' && steps.evidence_action_regressions.outcome == 'success' && steps.lease_recovery_regressions.outcome == 'success' && steps.product_contract_regressions.outcome == 'success' && steps.persisted_records.outcome == 'success' && steps.pages_filter_regression.outcome == 'success' && steps.pages_narrow_task_visibility.outcome == 'success' && steps.productization_phase1_regressions.outcome == 'success' && steps.gap_scan_regressions.outcome == 'success' && 'success' || 'failure' }}
         run: python3 scripts/autonomy_ops.py --output autonomy.json
       - name: Upload read-only autonomy snapshot
         if: ${{ always() }}
