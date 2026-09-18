@@ -48,17 +48,17 @@ def main() -> None:
     must_fail(validate_persisted_input, {"deployment_token": "plaintext"})
     must_fail(validate_persisted_input, {"nested": {"password": "plaintext"}})
 
-    components = [{"name": "core", "identity": "git:abc123", "digest": "a" * 64}]
-    actions = [{"uses": "actions/checkout@" + "b" * 40}]
+    components = [{"name": "core", "identity": "git:" + "a" * 40, "digest": "sha256:" + "b" * 64}]
+    actions = [{"uses": "actions/checkout@" + "c" * 40}]
     first = package_manifest(installation, config, components=components, actions=actions)
     second = package_manifest(dict(installation), dict(config), components=list(components), actions=list(actions))
     assert first == second
     assert first["release_id"].startswith("release:sha256:")
-    must_fail(package_manifest, installation, config, components=[{"name": "core", "identity": "git:abc"}])
+    must_fail(package_manifest, installation, config, components=[{"name": "core", "identity": "git:abc", "digest": "sha256:" + "b" * 64}])
     must_fail(package_manifest, installation, config, actions=[{"uses": "actions/checkout@v4"}])
-    must_fail(package_manifest, installation, config, components=[{"name": "core", "identity": "git:abc123", "digest": "z" * 64}])
+    must_fail(package_manifest, installation, config, components=[{"name": "core", "identity": "git:" + "a" * 40, "digest": "z" * 64}])
     must_fail(validate_persisted_input, {"private_key": "plaintext"})
-    must_fail(validate_persisted_input, {"api_secret": "plaintext"})
+    must_fail(validate_persisted_input, {"api_secret": "plaintext"})\n    must_fail(validate_persisted_input, {"deployment_secret_ref": "literal-secret"})\n    must_fail(validate_persisted_input, {"required_secret_refs": ["OK_TOKEN", "bad-ref"]})
 
     plan = plan_single_repo_reconcile(installation, config, [])
     assert [x["op"] for x in plan] == ["create", "create"]
@@ -66,11 +66,11 @@ def main() -> None:
     observed = [x["path"] for x in plan]
     assert plan_single_repo_reconcile(installation, config, observed) == []
 
-    adopt = plan_single_repo_reconcile(installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "adoptable"}])
-    abort = plan_single_repo_reconcile(installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign"}])
+    adopt = plan_single_repo_reconcile(installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign", "collision_action": "adopt"}])
+    abort = plan_single_repo_reconcile(installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign", "collision_action": "abort"}])
     assert adopt[0]["op"] == "adopt"
     assert abort[0]["op"] == "abort"
-    assert adopt[0]["resource_id"] == abort[0]["resource_id"]
+    assert adopt[0]["resource_id"] == abort[0]["resource_id"]\n    must_fail(plan_single_repo_reconcile, installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign"}])
 
     # Inputs use symbolic roles/repository identity, never fixed control Issue identity or historical title prefixes.
     assert "#" not in repr(installation)
