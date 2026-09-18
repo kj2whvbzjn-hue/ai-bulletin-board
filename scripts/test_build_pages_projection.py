@@ -104,6 +104,82 @@ row = m.project_row({"number": 1, "title": "Lease task"}, state, owner, last)
 assert (state, owner) == ("open", None)
 assert row["lease_expires_at"] == iso(T0 + timedelta(seconds=900))
 assert row["lease_status"] == "stale"
+assert row["recovery_status"] == "expired_unreclaimed"
+assert row["prior_owner"] == "lease-owner"
+assert row["prior_claim_ref"] == "comment:20"
+assert row["prior_lease_expires_at"] == iso(T0 + timedelta(seconds=900))
+assert row["claim_ref"] == ""
+assert row["last_owner_activity_at"] == iso(T0)
+assert row["reclaim_count"] == 0
+assert row["next_action"].startswith("Fresh-CLAIM/replay")
+
+# Exact expiry is fail-closed; a heartbeat at the boundary cannot renew.
+boundary_comments = [
+    comment(22, 0, event("CLAIM", "boundary-owner", "boundary-claim")),
+    comment(23, 900, event("HEARTBEAT", "boundary-owner", "boundary-heartbeat")),
+]
+state, owner, last = m.replay(issue, boundary_comments, T0 + timedelta(seconds=901))
+boundary_row = m.project_row({"number": 1, "title": "Boundary task"}, state, owner, last)
+assert (state, owner) == ("open", None)
+assert boundary_row["recovery_status"] == "expired_unreclaimed"
+assert boundary_row["prior_owner"] == "boundary-owner"
+assert boundary_row["last_owner_activity_at"] == iso(T0)
+
+# A heartbeat before expiry extends the lease without changing protocol semantics.
+before_comments = [
+    comment(24, 0, event("CLAIM", "live-owner", "live-claim")),
+    comment(25, 899, event("HEARTBEAT", "live-owner", "live-heartbeat")),
+]
+state, owner, last = m.replay(issue, before_comments, T0 + timedelta(seconds=900))
+before_row = m.project_row({"number": 1, "title": "Live task"}, state, owner, last)
+assert (state, owner) == ("claimed", "live-owner")
+assert before_row["recovery_status"] == "active"
+assert before_row["claim_ref"] == "comment:24"
+assert before_row["lease_started_at"] == iso(T0)
+assert before_row["lease_expires_at"] == iso(T0 + timedelta(seconds=1799))
+assert before_row["last_owner_activity_at"] == iso(T0 + timedelta(seconds=899))
+
+# First post-expiry CLAIM becomes the only live owner, retains prior-owner audit,
+# and losing/late former-worker events cannot masquerade as active owner activity.
+reclaim_b = event("CLAIM", "reclaimer", "reclaim-b", "continue exact recovered SHA")
+losing_c = event("CLAIM", "loser", "reclaim-c", "wrong claimant action")
+late_old = event("PROGRESS", "lease-owner", "late-old", "late old worker action")
+late_old["artifacts"] = ["PR:#53@3333333"]
+reclaim_comments = [
+    comment(26, 0, event("CLAIM", "lease-owner", "reclaim-origin")),
+    comment(27, 901, reclaim_b),
+    comment(28, 902, losing_c),
+    comment(29, 903, late_old),
+]
+state, owner, last = m.replay(issue, reclaim_comments, T0 + timedelta(seconds=904))
+reclaim_row = m.project_row({"number": 1, "title": "Reclaimed task"}, state, owner, last)
+assert (state, owner) == ("claimed", "reclaimer")
+assert reclaim_row["recovery_status"] == "reclaimed"
+assert reclaim_row["prior_owner"] == "lease-owner"
+assert reclaim_row["prior_claim_ref"] == "comment:26"
+assert reclaim_row["reclaim_ref"] == "comment:27"
+assert reclaim_row["reclaim_at"] == iso(T0 + timedelta(seconds=901))
+assert reclaim_row["reclaim_count"] == 1
+assert reclaim_row["last_owner_activity_at"] == iso(T0 + timedelta(seconds=901))
+assert reclaim_row["next_action"] == "continue exact recovered SHA"
+assert reclaim_row["current_head"] == ""
+
+# Released/completed/history_unsafe remain distinct non-authoritative diagnostics.
+state, owner, last = m.replay(
+    issue,
+    [comment(80, 0, event("CLAIM", "a", "release-claim")), comment(81, 1, event("RELEASE", "a", "release-event"))],
+    T0 + timedelta(seconds=2),
+)
+assert m.project_row({"number": 1, "title": "Released"}, state, owner, last)["recovery_status"] == "released"
+state, owner, last = m.replay(
+    issue,
+    [comment(82, 0, event("CLAIM", "a", "result-claim")), comment(83, 1, event("RESULT", "a", "result-event"))],
+    T0 + timedelta(seconds=2),
+)
+assert m.project_row({"number": 1, "title": "Completed"}, state, owner, last)["recovery_status"] == "completed"
+unsafe_row = m.project_row({"number": 1, "title": "Unsafe"}, "history_unsafe", None, None)
+assert unsafe_row["recovery_status"] == "history_unsafe"
+assert "Human Owner" in unsafe_row["next_action"]
 
 # Review coverage is exact-head and must come from a different logical agent.
 head1 = "PR:#53@1111111"
