@@ -20,7 +20,7 @@ on:
       - 'scripts/test_validate_product_ux_contract.py'
       - 'data/product-ux-e2e/**'
       - 'pages/index.html'
-      - 'scripts/test_pages_filter_events.py'
+      - 'scripts/test_pages_filter_events.py'\n      - 'productization_v1/**'\n      - 'scripts/test_productization_phase1.py'
 
 permissions:
   contents: read
@@ -52,11 +52,11 @@ jobs:
       - name: Run Pages filter event regression
         id: pages_filter_regression
         run: python3 scripts/test_pages_filter_events.py
-      - name: Derive GitHub-native autonomy snapshot
+      - name: Run Productization Phase-1 core regressions\n        id: productization_phase1_regressions\n        run: python3 scripts/test_productization_phase1.py\n      - name: Derive GitHub-native autonomy snapshot
         if: ${{ always() }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          AI_BB_MAIN_VALIDATION_OUTCOME: ${{ steps.autonomy_regressions.outcome == 'success' && steps.lease_recovery_regressions.outcome == 'success' && steps.product_contract_regressions.outcome == 'success' && steps.persisted_records.outcome == 'success' && steps.pages_filter_regression.outcome == 'success' && 'success' || 'failure' }}
+          AI_BB_MAIN_VALIDATION_OUTCOME: ${{ steps.autonomy_regressions.outcome == 'success' && steps.lease_recovery_regressions.outcome == 'success' && steps.product_contract_regressions.outcome == 'success' && steps.persisted_records.outcome == 'success' && steps.pages_filter_regression.outcome == 'success' && steps.productization_phase1_regressions.outcome == 'success' && 'success' || 'failure' }}
         run: python3 scripts/autonomy_ops.py --output autonomy.json
       - name: Upload read-only autonomy snapshot
         if: ${{ always() }}
