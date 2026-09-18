@@ -331,6 +331,68 @@ assert a["human_required"] == [{
     "next_action": "Human Owner must decide account setting",
     "waiting_reason": "human-required decision",
 }]
+
+# Deterministic recovery/safety Human Required conditions must survive the
+# sanitized projection even when they use non-generic scheduler classes/reasons.
+recovery_autonomy = copy.deepcopy(autonomy)
+recovery_autonomy["queue"].extend([
+    {
+        "task": "#60",
+        "state": "open",
+        "agent": "",
+        "lease_status": "stale",
+        "recovery_status": "expired_unreclaimed",
+        "reclaim_count": 2,
+        "review_needed": False,
+        "current_head": "",
+        "next_action": "Human Owner must inspect repeated lease reclaim churn.",
+        "next_class": "idle/human-required",
+        "waiting_reason": "repeated lease reclaim churn",
+    },
+    {
+        "task": "#61",
+        "state": "history_unsafe",
+        "agent": "",
+        "lease_status": "",
+        "recovery_status": "history_unsafe",
+        "review_needed": False,
+        "current_head": "",
+        "next_action": "Human Owner must create a new canonical Issue.",
+        "next_class": "broken-main/security",
+        "waiting_reason": "history_unsafe",
+    },
+    {
+        "task": "#62",
+        "state": "completed",
+        "agent": "",
+        "lease_status": "",
+        "recovery_status": "completed",
+        "review_needed": False,
+        "current_head": "",
+        "next_action": "",
+        "next_class": "idle/human-required",
+        "waiting_reason": "completed",
+    },
+])
+recovery_projection = m.project_autonomy(recovery_autonomy, "kj2whvbzjn-hue/ai-bulletin-board")
+assert recovery_projection["human_required"] == [
+    {
+        "task": "#23",
+        "next_action": "Human Owner must decide account setting",
+        "waiting_reason": "human-required decision",
+    },
+    {
+        "task": "#60",
+        "next_action": "Human Owner must inspect repeated lease reclaim churn.",
+        "waiting_reason": "repeated lease reclaim churn",
+    },
+    {
+        "task": "#61",
+        "next_action": "Human Owner must create a new canonical Issue.",
+        "waiting_reason": "history_unsafe",
+    },
+]
+assert all(row["task"] != "#62" for row in recovery_projection["human_required"])
 assert "raw_comment" not in json.dumps(a)
 
 bad_autonomy = copy.deepcopy(autonomy)
