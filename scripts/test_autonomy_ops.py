@@ -44,6 +44,31 @@ out = m.derive([row(task="#23", next_action="Human Owner must decide repository 
 assert out["health"]["human_required"] is True
 assert out["queue"][0]["next_class"] == "idle/human-required"
 
+# Completed tasks use the idle scheduling class but must not raise Human Required health.
+completed = row(task="#24", state="completed")
+completed["recovery_status"] = "completed"
+out = m.derive([completed], [], "MAIN_GREEN", {})
+assert out["queue"][0]["next_class"] == "idle/human-required"
+assert out["queue"][0]["waiting_reason"] == "completed"
+assert out["health"]["human_required"] is False
+
+# Repeated expiry/reclaim churn is deterministic Human Required even without prose keywords.
+churn = row(task="#25", state="open", lease="stale")
+churn["recovery_status"] = "expired_unreclaimed"
+churn["reclaim_count"] = 2
+out = m.derive([churn], [], "MAIN_GREEN", {})
+assert out["queue"][0]["next_class"] == "idle/human-required"
+assert out["queue"][0]["waiting_reason"] == "repeated lease reclaim churn"
+assert out["health"]["human_required"] is True
+
+# history_unsafe remains a Human Required safety condition even though it routes through broken-main/security.
+unsafe = row(task="#26", state="history_unsafe")
+unsafe["recovery_status"] = "history_unsafe"
+out = m.derive([unsafe], [], "MAIN_GREEN", {})
+assert out["queue"][0]["next_class"] == "broken-main/security"
+assert out["health"]["history_unsafe"] is True
+assert out["health"]["human_required"] is True
+
 # Main status is conservative: unknown without checks; red on any failure; green only all-complete safe conclusions.
 assert m.main_check_state([]) == "MAIN_UNKNOWN"
 assert m.main_check_state([{"status": "completed", "conclusion": "failure"}]) == "MAIN_RED"
