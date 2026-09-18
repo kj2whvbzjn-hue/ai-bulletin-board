@@ -13,6 +13,11 @@ def main():
     assert grant.principal=="octo-app" and grant.capabilities==frozenset({"claim"}) and grant.scopes==frozenset({"role:manager"})
     assert event_is_authorized({"actor":"octo-app"},capability="claim",scope="role:manager",policy=policy)
     assert not event_is_authorized({"actor":"intruder"},capability="claim",scope="role:manager",policy=policy)
+    reference_policy={"principals":[{"principal_id":"app.control-plane","type":"github_app","subject":"app:123","capabilities":["claim","heartbeat","release","progress","handoff","result","review"]}],"state_effect_grants":[{"principal_id":"app.control-plane","capability":cap,"task_scope":"role:manager"} for cap in ["claim","heartbeat","release","progress","handoff","result","review"]]}
+    assert event_is_authorized({"actor":"app.control-plane"},capability="claim",scope="role:manager",policy=reference_policy)
+    assert event_is_authorized({"actor":"app.control-plane"},capability="review",scope="role:manager",policy=reference_policy)
+    assert not event_is_authorized({"actor":"app.control-plane"},capability="integrate",scope="role:manager",policy=reference_policy)
+    assert not event_is_authorized({"actor":"app.control-plane"},capability="claim",scope="workstream:other",policy=reference_policy)
     unmapped={"principals":policy["principals"],"state_effect_grants":[{"principal_id":"missing","capability":"claim","task_scope":"role:manager"}]}
     escalated={"principals":policy["principals"],"state_effect_grants":[{"principal_id":"octo-app","capability":"integrate","task_scope":"*"}]}
     fixed_scope={"principals":policy["principals"],"state_effect_grants":[{"principal_id":"octo-app","capability":"claim","task_scope":"#16"}]}
