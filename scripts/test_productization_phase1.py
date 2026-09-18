@@ -51,6 +51,9 @@ def main() -> None:
     assert first["release_id"].startswith("release:sha256:")
     must_fail(package_manifest, installation, config, components=[{"name": "core", "identity": "git:abc"}])
     must_fail(package_manifest, installation, config, actions=[{"uses": "actions/checkout@v4"}])
+    must_fail(package_manifest, installation, config, components=[{"name": "core", "identity": "git:abc123", "digest": "z" * 64}])
+    must_fail(validate_persisted_input, {"private_key": "plaintext"})
+    must_fail(validate_persisted_input, {"api_secret": "plaintext"})
 
     plan = plan_single_repo_reconcile(installation, config, [])
     assert [x["op"] for x in plan] == ["create", "create"]
