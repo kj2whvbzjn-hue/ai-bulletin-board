@@ -26,7 +26,7 @@ on:
       - 'scripts/gap_scan.py'
       - 'scripts/test_gap_scan.py'
       - 'scripts/evidence_action_gate.py'
-      - 'scripts/test_evidence_action_gate.py'
+      - 'scripts/test_evidence_action_gate.py'\n      - 'scripts/rule_governance.py'\n      - 'scripts/test_rule_governance.py'
 
 permissions:
   contents: read
@@ -64,14 +64,14 @@ jobs:
       - name: Run Productization Phase-1 core regressions
         id: productization_phase1_regressions
         run: python3 scripts/test_productization_phase1.py
-      - name: Run standing GAP_SCAN regressions
+      - name: Run rule governance regressions\n        id: rule_governance_regressions\n        run: python3 scripts/test_rule_governance.py\n      - name: Run standing GAP_SCAN regressions
         id: gap_scan_regressions
         run: python3 scripts/test_gap_scan.py
       - name: Derive GitHub-native autonomy snapshot
         if: ${{ always() }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          AI_BB_MAIN_VALIDATION_OUTCOME: ${{ steps.autonomy_regressions.outcome == 'success' && steps.evidence_action_regressions.outcome == 'success' && steps.lease_recovery_regressions.outcome == 'success' && steps.product_contract_regressions.outcome == 'success' && steps.persisted_records.outcome == 'success' && steps.pages_filter_regression.outcome == 'success' && steps.productization_phase1_regressions.outcome == 'success' && steps.gap_scan_regressions.outcome == 'success' && 'success' || 'failure' }}
+          AI_BB_MAIN_VALIDATION_OUTCOME: ${{ steps.autonomy_regressions.outcome == 'success' && steps.evidence_action_regressions.outcome == 'success' && steps.lease_recovery_regressions.outcome == 'success' && steps.product_contract_regressions.outcome == 'success' && steps.persisted_records.outcome == 'success' && steps.pages_filter_regression.outcome == 'success' && steps.productization_phase1_regressions.outcome == 'success' && steps.gap_scan_regressions.outcome == 'success' && steps.rule_governance_regressions.outcome == 'success' && 'success' || 'failure' }}
         run: python3 scripts/autonomy_ops.py --output autonomy.json
       - name: Upload read-only autonomy snapshot
         if: ${{ always() }}
