@@ -1,0 +1,30 @@
+{
+  "schema_version": "ai-bb-product-ux-e2e:v1",
+  "kind": "ux_finding",
+  "finding_id": "board/narrow-review-target-below-fold",
+  "lifecycle": "DISCOVERY",
+  "evidence_refs": [
+    "main:ddff72241789f273f5b6ebb249695d44645b2604",
+    "path:data/product-ux-e2e/baseline-2026-09-18.json",
+    "artifact:10531458209",
+    "browser-agent:main:ffdfc989ae2b677d1f32cfa7a650452fb6be4016",
+    "browser-agent:path:scripts/run-live-board-baseline.mjs",
+    "path:pages/index.html",
+    "Issue:#59:comment:5725054151"
+  ],
+  "surfaces": [
+    "pages/task-queue",
+    "viewport/narrow",
+    "journey/board-review-needed-inspect"
+  ],
+  "friction": "At 390x844, the first review-needed task link is measured 147 px below the viewport after the review filter is applied, while the same journey is visible at 1440x900. The automated click still succeeds because the browser can scroll the locator into view, so the baseline can pass transition checks while a user must move past stacked narrow-page content before inspecting the filtered task.",
+  "hypothesis": "A narrower-page presentation that brings the filtered task list closer to the review control could reduce this first-result discovery friction without changing task state semantics. This is a small UI-surface hypothesis with moderate regression risk because header, summary, filters, responsive cards, keyboard order, and URL-state behavior interact. The similar 147 px signal on find-open-task is not used as UI evidence here because that runner reports the landing-page task bounds before search rather than the post-search clickable target.",
+  "acceptance_tests": [
+    "Re-run the real deployed board/review-needed-inspect journey at 390x844 and 1440x900; compare the narrow pre-action target visibility/distance to the accepted baseline without inventing a budget.",
+    "Keep transition_success, destination_correct, state_persistence_pass, keyboard_accessibility_pass, and empty_error_state_pass true on both required viewports.",
+    "Preserve search/filter URL synchronization, clear behavior, responsive task cards, and the read-only sanitized projection boundary.",
+    "Treat baseline clipping/overlap counts as diagnostic only until a rendered inspection ties them to visible obstruction; horizontal_overflow_px must remain measured separately."
+  ],
+  "owner": "Product/UX Lab #59",
+  "next_action": "Return this DISCOVERY finding to #16 for admission/defer/reject. Do not implement UI from this record alone; if admitted, use the existing #59 workstream and prove any deployed change against the accepted desktop+narrow baseline before setting evidence-backed budgets."
+}
