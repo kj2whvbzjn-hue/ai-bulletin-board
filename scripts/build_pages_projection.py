@@ -30,8 +30,11 @@ AUTONOMY_HEALTH_FIELDS = (
     "stale_review", "stale_or_expiring_claim", "history_unsafe", "human_required",
 )
 AUTONOMY_QUEUE_FIELDS = (
-    "task", "state", "agent", "lease_status", "review_needed", "current_head",
-    "next_action", "next_class", "waiting_reason",
+    "task", "state", "agent", "lease_status", "recovery_status",
+    "claim_ref", "lease_started_at", "prior_owner", "prior_claim_ref",
+    "prior_lease_expires_at", "reclaim_ref", "reclaim_at",
+    "last_owner_activity_at", "reclaim_count",
+    "review_needed", "current_head", "next_action", "next_class", "waiting_reason",
 )
 NEXT_CLASSES = {
     "broken-main/security", "live-claim", "review-needed", "implementation-ready",
@@ -40,8 +43,19 @@ NEXT_CLASSES = {
 MAIN_STATUSES = {"MAIN_GREEN", "MAIN_RED", "MAIN_UNKNOWN"}
 TASK_STATES = {"open", "claimed", "completed", "history_unsafe", "blocked"}
 LEASE_STATES = {"", "active", "expiring", "stale"}
+RECOVERY_STATES = {
+    "", "active", "expiring", "expired_unreclaimed", "reclaimed",
+    "released", "completed", "history_unsafe",
+}
+RECOVERY_REF = re.compile(r"^comment:\d+$")
 
-SAFE_FIELDS = ("task", "title", "state", "agent", "last_event", "last_activity_at", "lease_expires_at", "lease_status", "review_needed", "current_head", "next_action", "artifacts")
+SAFE_FIELDS = (
+    "task", "title", "state", "agent", "last_event", "last_activity_at",
+    "lease_expires_at", "lease_status", "recovery_status", "claim_ref",
+    "lease_started_at", "prior_owner", "prior_claim_ref", "prior_lease_expires_at",
+    "reclaim_ref", "reclaim_at", "last_owner_activity_at", "reclaim_count",
+    "review_needed", "current_head", "next_action", "artifacts",
+)
 CREDENTIAL_LIKE = re.compile(r"(?i)(?:authorization\s*:|bearer\s+|token\s*=|api[_-]?key\s*=|password\s*=|cookie\s*:|private[_ -]?key)")
 
 
@@ -134,6 +148,14 @@ def parse_time(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def _iso_utc(value):
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if value is not None else ""
+
+
+def _comment_ref(cid):
+    return f"comment:{int(cid)}"
+
+
 def replay(issue, comments, now):
     number = issue["number"]
     events = []
@@ -156,13 +178,37 @@ def replay(issue, comments, now):
     seen = {}
     owner = None
     expiry = None
+    current_claim_ref = ""
+    current_claim_at = None
     last_lease_expiry = None
+    prior_expired_owner = ""
+    prior_expired_claim_ref = ""
+    prior_expired_at = None
+    reclaim_ref = ""
+    reclaim_at = None
+    reclaim_count = 0
+    last_owner_activity_at = None
+    owner_next_action = ""
+    released = False
     completed = False
     last = None
     current_head = ""
     reviewed_heads = set()
     head_authors = {}
     seen_heads = set()
+
+    def expire_current(expired_at):
+        nonlocal owner, expiry, current_claim_ref, current_claim_at
+        nonlocal prior_expired_owner, prior_expired_claim_ref, prior_expired_at
+        if owner is not None:
+            prior_expired_owner = owner
+            prior_expired_claim_ref = current_claim_ref
+            prior_expired_at = expired_at
+        owner = None
+        expiry = None
+        current_claim_ref = ""
+        current_claim_at = None
+
     for created, cid, p, c in events:
         key = p["idempotency_key"]
         normalized = json.dumps(p, sort_keys=True, separators=(",", ":"))
@@ -173,11 +219,11 @@ def replay(issue, comments, now):
         seen[key] = normalized
         last = (created, cid, p, c)
         typ = p["type"]
-        # Lease expiry is a derived event-boundary fact. Clear stale ownership
-        # before evaluating any ownership-sensitive event or projection authorship.
+
+        # Canonical v1 is half-open: an event at exactly expiry is already too late.
         if owner is not None and expiry is not None and created >= expiry:
-            owner = None
-            expiry = None
+            expire_current(expiry)
+
         live = owner is not None and expiry is not None
         heads = [x for x in p.get("artifacts", []) if re.fullmatch(r"PR:#?\d+@[0-9a-f]{7,40}", x)]
         if heads:
@@ -193,24 +239,56 @@ def replay(issue, comments, now):
                     seen_heads.add(head)
                     current_head = head
                     head_authors.setdefault(head, p["agent_id"])
+
         if typ == "CLAIM":
             if not live and not completed:
+                if prior_expired_owner:
+                    reclaim_count += 1
+                    reclaim_ref = _comment_ref(cid)
+                    reclaim_at = created
                 owner = p["agent_id"]
+                current_claim_ref = _comment_ref(cid)
+                current_claim_at = created
                 expiry = created + timedelta(seconds=LEASE_SECONDS)
                 last_lease_expiry = expiry
+                last_owner_activity_at = created
+                owner_next_action = p.get("next_action") or ""
+                released = False
         elif typ == "HEARTBEAT":
             if live and p["agent_id"] == owner:
                 expiry = created + timedelta(seconds=LEASE_SECONDS)
                 last_lease_expiry = expiry
+                last_owner_activity_at = created
+                owner_next_action = p.get("next_action") or owner_next_action
+        elif typ in {"PROGRESS", "HANDOFF"}:
+            if live and p["agent_id"] == owner:
+                last_owner_activity_at = created
+                owner_next_action = p.get("next_action") or owner_next_action
         elif typ == "RELEASE":
             if live and p["agent_id"] == owner:
+                last_owner_activity_at = created
+                owner_next_action = p.get("next_action") or owner_next_action
                 owner = expiry = None
+                current_claim_ref = ""
+                current_claim_at = None
                 last_lease_expiry = None
+                released = True
         elif typ == "RESULT":
             if live and p["agent_id"] == owner:
+                last_owner_activity_at = created
                 completed = True
                 owner = expiry = None
+                current_claim_ref = ""
+                current_claim_at = None
                 last_lease_expiry = None
+                released = False
+
+    # Expiry can occur because wall-clock now crossed the boundary even when no
+    # later event exists. Preserve the expired owner/ref as audit-only diagnostics.
+    if owner is not None and expiry is not None and now >= expiry:
+        expired_at = expiry
+        expire_current(expired_at)
+
     if completed:
         state = "completed"
     elif owner is not None and expiry is not None and now < expiry:
@@ -218,24 +296,48 @@ def replay(issue, comments, now):
     else:
         state = "open"
         owner = None
+
     if last is not None:
         lease_status = ""
-        display_expiry = expiry if owner is not None and expiry is not None else last_lease_expiry
-        if display_expiry is not None:
-            if owner is not None and expiry is not None and now < expiry:
-                lease_status = "expiring" if expiry - now <= timedelta(seconds=300) else "active"
-            elif now >= display_expiry:
-                lease_status = "stale"
+        display_expiry = expiry if owner is not None and expiry is not None else (
+            prior_expired_at if prior_expired_at is not None else last_lease_expiry
+        )
+        if owner is not None and expiry is not None and now < expiry:
+            lease_status = "expiring" if expiry - now <= timedelta(seconds=300) else "active"
+        elif prior_expired_at is not None and not released and not completed:
+            lease_status = "stale"
+
+        if completed:
+            recovery_status = "completed"
+        elif released:
+            recovery_status = "released"
+        elif owner is not None and expiry is not None:
+            recovery_status = "reclaimed" if reclaim_ref and current_claim_ref == reclaim_ref else lease_status
+        elif prior_expired_owner:
+            recovery_status = "expired_unreclaimed"
+        else:
+            recovery_status = ""
+
         meta = {
-            "last_activity_at": last[0].astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
-            "lease_expires_at": display_expiry.astimezone(timezone.utc).isoformat().replace("+00:00", "Z") if display_expiry is not None else "",
+            "last_activity_at": _iso_utc(last[0]),
+            "lease_expires_at": _iso_utc(display_expiry),
             "lease_status": lease_status,
+            "recovery_status": recovery_status,
+            "claim_ref": current_claim_ref,
+            "lease_started_at": _iso_utc(current_claim_at),
+            "prior_owner": prior_expired_owner,
+            "prior_claim_ref": prior_expired_claim_ref,
+            "prior_lease_expires_at": _iso_utc(prior_expired_at),
+            "reclaim_ref": reclaim_ref,
+            "reclaim_at": _iso_utc(reclaim_at),
+            "last_owner_activity_at": _iso_utc(last_owner_activity_at),
+            "reclaim_count": reclaim_count,
+            "owner_next_action": owner_next_action,
             "review_needed": bool(current_head and current_head not in reviewed_heads),
             "current_head": current_head,
         }
         last = (*last, meta)
     return state, owner, last
-
 
 def safe_artifacts(items):
     return [x for x in items if SAFE_ARTIFACT.fullmatch(x)][:8]
@@ -244,6 +346,26 @@ def project_row(issue, state, owner, last):
     """Explicit whitelist boundary between GitHub payloads and Pages JSON."""
     p = last[2] if last else {}
     meta = last[4] if last and len(last) > 4 else {}
+    recovery_status = "history_unsafe" if state == "history_unsafe" else meta.get("recovery_status", "")
+    if recovery_status not in RECOVERY_STATES:
+        recovery_status = ""
+
+    if state == "history_unsafe":
+        next_action = "Human Owner must create a new canonical Issue; do not continue this history_unsafe task."
+    elif recovery_status == "expired_unreclaimed":
+        next_action = (
+            "Fresh-CLAIM/replay this task, then discover prior GitHub-native branches, commits, "
+            "open/closed PRs, checks, reviews, and artifacts before any mutation."
+        )
+    elif state == "claimed" and meta.get("owner_next_action"):
+        next_action = meta.get("owner_next_action")
+    else:
+        next_action = p.get("next_action") or ""
+
+    def recovery_ref(key):
+        value = meta.get(key, "")
+        return value if not value or RECOVERY_REF.fullmatch(value) else ""
+
     row = {
         "task": f"#{issue['number']}",
         "title": safe_text(issue.get("title") or "", 180),
@@ -252,10 +374,20 @@ def project_row(issue, state, owner, last):
         "last_event": p.get("type", "") if p.get("type") in EVENT_TYPES else "",
         "last_activity_at": meta.get("last_activity_at", ""),
         "lease_expires_at": meta.get("lease_expires_at", ""),
-        "lease_status": meta.get("lease_status", "") if meta.get("lease_status", "") in {"", "active", "expiring", "stale"} else "",
+        "lease_status": meta.get("lease_status", "") if meta.get("lease_status", "") in LEASE_STATES else "",
+        "recovery_status": recovery_status,
+        "claim_ref": recovery_ref("claim_ref"),
+        "lease_started_at": meta.get("lease_started_at", ""),
+        "prior_owner": safe_text(meta.get("prior_owner", ""), 160),
+        "prior_claim_ref": recovery_ref("prior_claim_ref"),
+        "prior_lease_expires_at": meta.get("prior_lease_expires_at", ""),
+        "reclaim_ref": recovery_ref("reclaim_ref"),
+        "reclaim_at": meta.get("reclaim_at", ""),
+        "last_owner_activity_at": meta.get("last_owner_activity_at", ""),
+        "reclaim_count": int(meta.get("reclaim_count", 0) or 0),
         "review_needed": bool(meta.get("review_needed", False)),
         "current_head": meta.get("current_head", "") if SAFE_ARTIFACT.fullmatch(meta.get("current_head", "")) else "",
-        "next_action": safe_text(p.get("next_action") or ""),
+        "next_action": safe_text(next_action),
         "artifacts": safe_artifacts(p.get("artifacts", [])),
     }
     return {key: row[key] for key in SAFE_FIELDS}
@@ -306,6 +438,16 @@ def project_autonomy(snapshot, repository):
         lease_status = raw.get("lease_status") or ""
         if lease_status not in LEASE_STATES:
             raise ValueError("invalid autonomy lease_status")
+        recovery_status = raw.get("recovery_status") or ""
+        if recovery_status not in RECOVERY_STATES:
+            raise ValueError("invalid autonomy recovery_status")
+
+        def queue_ref(key):
+            value = raw.get(key) or ""
+            if value and RECOVERY_REF.fullmatch(str(value)) is None:
+                raise ValueError(f"invalid autonomy {key}")
+            return str(value)
+
         current_head = raw.get("current_head") or ""
         if current_head and EXACT_HEAD.fullmatch(current_head) is None:
             raise ValueError("invalid autonomy current_head")
@@ -317,6 +459,16 @@ def project_autonomy(snapshot, repository):
             "state": state,
             "agent": safe_text(raw.get("agent") or "", 160),
             "lease_status": lease_status,
+            "recovery_status": recovery_status,
+            "claim_ref": queue_ref("claim_ref"),
+            "lease_started_at": safe_text(raw.get("lease_started_at") or "", 40),
+            "prior_owner": safe_text(raw.get("prior_owner") or "", 160),
+            "prior_claim_ref": queue_ref("prior_claim_ref"),
+            "prior_lease_expires_at": safe_text(raw.get("prior_lease_expires_at") or "", 40),
+            "reclaim_ref": queue_ref("reclaim_ref"),
+            "reclaim_at": safe_text(raw.get("reclaim_at") or "", 40),
+            "last_owner_activity_at": safe_text(raw.get("last_owner_activity_at") or "", 40),
+            "reclaim_count": _nonnegative_int(raw.get("reclaim_count", 0), "queue.reclaim_count"),
             "review_needed": _bool(raw.get("review_needed"), "queue.review_needed"),
             "current_head": current_head,
             "next_action": safe_text(raw.get("next_action") or ""),
