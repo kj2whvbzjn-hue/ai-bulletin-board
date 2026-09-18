@@ -31,7 +31,9 @@ on:
       - 'scripts/evidence_action_gate.py'
       - 'scripts/test_evidence_action_gate.py'
       - 'scripts/rule_governance.py'
-      - 'scripts/test_rule_governance.py'\n      - 'scripts/repeated_non_execution.py'\n      - 'scripts/test_repeated_non_execution.py'
+      - 'scripts/test_rule_governance.py'
+      - 'scripts/repeated_non_execution.py'
+      - 'scripts/test_repeated_non_execution.py'
 
 permissions:
   contents: read
@@ -81,7 +83,10 @@ jobs:
       - name: Run rule governance regressions
         id: rule_governance_regressions
         run: python3 scripts/test_rule_governance.py
-      - name: Run repeated non-execution regressions\n        id: repeated_non_execution_regressions\n        run: python3 scripts/test_repeated_non_execution.py\n      - name: Run standing GAP_SCAN regressions
+      - name: Run repeated non-execution regressions
+        id: repeated_non_execution_regressions
+        run: python3 scripts/test_repeated_non_execution.py
+      - name: Run standing GAP_SCAN regressions
         id: gap_scan_regressions
         run: python3 scripts/test_gap_scan.py
       - name: Derive GitHub-native autonomy snapshot
