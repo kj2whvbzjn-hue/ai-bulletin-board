@@ -186,6 +186,14 @@ The recurrence being prevented is a clean integration-ready head stalling solely
 
 This fallback never permits self-review, implementation mutation while acting as integrator, merge of a stale/changed or unreviewed head, required-check bypass, duplicate integration ownership, or continued downstream merging through `MAIN_RED`. It changes scheduling only; `protocol/GITHUB_PROTOCOL.md` remains canonical for CLAIM/lease/replay semantics. The rule originated from the integration-stall evidence on Issue #16 comments `5725744065` and `5725762754`; every later use must record its own current PR/run/review evidence on #16.
 
+## Repeated non-execution / required-executor guard
+
+For the same required objective or materially equivalent `next_action`, two dispatches that both end without actual execution are a `REPEATED_NON_EXECUTION` incident. A CLAIM, acknowledgment, restatement, generic blocker, timeout/lease expiry, or RELEASE without required evidence does not count as execution. The first non-execution permits one corrective redispatch. On the second, Kernel/Manager must stop repeating the instruction, classify the cause, and open or update exactly one canonical root-cause/problem workstream. A third identical dispatch is prohibited until both a cause classification and materially corrective `next_action` are recorded.
+
+When a task names a shared executor (for example browser-agent, reviewer lane, or integration mechanism), a capability-blocked RESULT/RELEASE must cite sanitized evidence that the executor was actually attempted and concretely failed, or fresh discovery evidence proving it unavailable/inapplicable. Worker-local capability mismatch alone is a non-execution strike, not a global blocker. Cause classification must distinguish at least dispatch not consumed, ignored instruction, worker-local capability mismatch, shared executor undiscovered/unavailable, executor invocation failure, permission/Human Required, dependency/safety gate, and scheduler defect. Safety, `MAIN_RED`, `history_unsafe`, and Human Required gates retain precedence and do not get bypassed to satisfy execution evidence. Keep unrelated safe runnable CPUs working.
+
+Use `scripts/repeated_non_execution.py` for deterministic sanitized enforcement. Never publish private browser commands/results or credentials as executor evidence.
+
 ## Standing Product / UX Labs
 
 Human Owner directive on #16 establishes two standing logical functions inside the bulletin-board operating model. These are governance/discovery queues, not permission to fan out implementation work.
