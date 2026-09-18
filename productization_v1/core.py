@@ -7,9 +7,11 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
-_SCOPE = re.compile(r"^(?:\*|role:[a-z][a-z0-9_-]*|workstream:[a-z0-9][a-z0-9._/-]*)$")
+_SCOPE = re.compile(r"^(?:\*|role:[a-z][a-z0-9_]*|workstream:[a-z0-9][a-z0-9._/-]*)$")
 _SECRET_KEYS = ("secret", "token", "password", "private_key")
-_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_SECRET_REF = re.compile(r"^[A-Z][A-Z0-9_]{2,127}$")
+_DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_COMPONENT_ID = re.compile(r"^(?:git:[0-9a-f]{40}|sha256:[0-9a-f]{64})$")
 
 
 def canonical_json(value: Any) -> str:
@@ -22,12 +24,19 @@ def deterministic_identity(kind: str, value: Any) -> str:
 
 
 def validate_persisted_input(value: Any, path: str = "$") -> None:
-    """Fail closed when a persisted input appears to contain secret material."""
+    """Fail closed on persisted secret values and malformed symbolic secret references."""
     if isinstance(value, Mapping):
         for key, item in value.items():
             name = str(key).lower()
-            if any(marker in name for marker in _SECRET_KEYS) and not name.endswith(("_ref", "_name")):
+            secret_key = any(marker in name for marker in _SECRET_KEYS)
+            if secret_key and not name.endswith(("_ref", "_refs", "_name")):
                 raise ValueError(f"secret value is not persistable at {path}.{key}")
+            if secret_key and name.endswith(("_ref", "_name")):
+                if not isinstance(item, str) or not _SECRET_REF.fullmatch(item):
+                    raise ValueError(f"secret reference must be symbolic at {path}.{key}")
+            if secret_key and name.endswith("_refs"):
+                if not isinstance(item, list) or any(not isinstance(ref, str) or not _SECRET_REF.fullmatch(ref) for ref in item):
+                    raise ValueError(f"secret references must be symbolic at {path}.{key}")
             validate_persisted_input(item, f"{path}.{key}")
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -62,13 +71,7 @@ def resolve_role(installation: Mapping[str, Any], role: str) -> int:
     return value
 
 
-def event_is_authorized(
-    event: Mapping[str, Any],
-    grants: Iterable[PrincipalGrant],
-    *,
-    capability: str,
-    scope: str,
-) -> bool:
+def event_is_authorized(event: Mapping[str, Any], grants: Iterable[PrincipalGrant], *, capability: str, scope: str) -> bool:
     """Decide state effect; unauthorized marker events remain audit-visible upstream."""
     if not _SCOPE.fullmatch(scope):
         return False
@@ -96,13 +99,17 @@ def package_manifest(
     normalized_components = []
     for component in components:
         item = dict(component)
-        if not item.get("name") or not item.get("identity") or not _SHA256.fullmatch(str(item.get("digest", ""))):
-            raise ValueError("components require name, immutable identity, and sha256 digest")
+        if (
+            not item.get("name")
+            or not _COMPONENT_ID.fullmatch(str(item.get("identity", "")))
+            or not _DIGEST.fullmatch(str(item.get("digest", "")))
+        ):
+            raise ValueError("components require name, immutable git/sha256 identity, and sha256 digest")
         normalized_components.append(item)
     normalized_actions = []
     for action in actions:
         uses = str(action.get("uses", ""))
-        if "@" not in uses or not re.fullmatch(r"[^@]+@[0-9a-fA-F]{40}", uses):
+        if "@" not in uses or not re.fullmatch(r"[^@]+@[0-9a-f]{40}", uses):
             raise ValueError("third-party executable Action refs must use immutable 40-hex SHA")
         normalized_actions.append(dict(action))
     seed = {
@@ -132,21 +139,27 @@ def plan_single_repo_reconcile(
     required = config.get("required_paths", ())
     if not isinstance(required, list) or not all(isinstance(p, str) and p for p in required):
         raise ValueError("config.required_paths must be a list of non-empty strings")
-    inventory: dict[str, str] = {}
+    inventory: dict[str, tuple[str, str | None]] = {}
     for item in observed:
         if isinstance(item, str):
-            inventory[item] = "managed"
+            path, ownership, decision = item, "managed", None
         else:
             path = str(item["path"])
-            if path in inventory:
-                raise ValueError(f"ambiguous observed resource: {path}")
-            inventory[path] = str(item.get("ownership", "foreign"))
+            ownership = str(item.get("ownership", "foreign"))
+            decision = item.get("collision_action")
+            if decision is not None:
+                decision = str(decision)
+        if path in inventory:
+            raise ValueError(f"ambiguous observed resource: {path}")
+        if ownership != "managed" and decision not in {"adopt", "abort"}:
+            raise ValueError(f"collision requires explicit adopt/abort decision: {path}")
+        inventory[path] = (ownership, decision)
     plan = []
     for path in sorted(set(required)):
-        ownership = inventory.get(path)
-        if ownership == "managed":
+        observed_state = inventory.get(path)
+        if observed_state and observed_state[0] == "managed":
             continue
-        op = "create" if ownership is None else "adopt" if ownership == "adoptable" else "abort"
+        op = "create" if observed_state is None else str(observed_state[1])
         plan.append({
             "op": op,
             "repository": repo,
