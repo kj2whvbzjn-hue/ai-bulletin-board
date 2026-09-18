@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
 """Offline deterministic acceptance checks for Productization v1 Phase 1."""
+import pathlib
+import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
+
 from productization_v1 import (
     PrincipalGrant,
     event_is_authorized,
