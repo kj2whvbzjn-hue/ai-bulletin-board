@@ -58,7 +58,9 @@ def main() -> None:
     must_fail(package_manifest, installation, config, actions=[{"uses": "actions/checkout@v4"}])
     must_fail(package_manifest, installation, config, components=[{"name": "core", "identity": "git:" + "a" * 40, "digest": "z" * 64}])
     must_fail(validate_persisted_input, {"private_key": "plaintext"})
-    must_fail(validate_persisted_input, {"api_secret": "plaintext"})\n    must_fail(validate_persisted_input, {"deployment_secret_ref": "literal-secret"})\n    must_fail(validate_persisted_input, {"required_secret_refs": ["OK_TOKEN", "bad-ref"]})
+    must_fail(validate_persisted_input, {"api_secret": "plaintext"})
+    must_fail(validate_persisted_input, {"deployment_secret_ref": "literal-secret"})
+    must_fail(validate_persisted_input, {"required_secret_refs": ["OK_TOKEN", "bad-ref"]})
 
     plan = plan_single_repo_reconcile(installation, config, [])
     assert [x["op"] for x in plan] == ["create", "create"]
@@ -70,7 +72,8 @@ def main() -> None:
     abort = plan_single_repo_reconcile(installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign", "collision_action": "abort"}])
     assert adopt[0]["op"] == "adopt"
     assert abort[0]["op"] == "abort"
-    assert adopt[0]["resource_id"] == abort[0]["resource_id"]\n    must_fail(plan_single_repo_reconcile, installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign"}])
+    assert adopt[0]["resource_id"] == abort[0]["resource_id"]
+    must_fail(plan_single_repo_reconcile, installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign"}])
 
     # Inputs use symbolic roles/repository identity, never fixed control Issue identity or historical title prefixes.
     assert "#" not in repr(installation)
