@@ -2,30 +2,34 @@
   "schema_version": "ai-bb-product-ux-e2e:v1",
   "kind": "ux_finding",
   "finding_id": "board/narrow-review-target-below-fold",
-  "lifecycle": "DISCOVERY",
+  "lifecycle": "VERIFIED",
   "evidence_refs": [
     "main:d1c5a32362dc5b0a31a4ea0b21f367c473b96793",
     "path:data/product-ux-e2e/baseline-2026-09-18.json",
     "artifact:10534444913",
     "artifact:10531458209",
+    "Issue:#103:result:5732016978",
+    "main:00ffbc869c8711308ca0e05c98504f70145f3971",
+    "artifact:10553883989",
     "browser-agent:main:945737cf87cc51c8fdd07d41bc28e475b5763423",
-    "browser-agent:path:scripts/run-live-board-baseline.mjs",
-    "path:pages/index.html",
-    "Issue:#59:comment:5726850703"
+    "browser-agent:run:35315728154",
+    "path:pages/index.html"
   ],
   "surfaces": [
     "pages/task-queue",
     "viewport/narrow",
     "journey/board-review-needed-inspect"
   ],
-  "friction": "On the accepted current post-console evidence at 390x844, the first review-needed task link is not visible before action and is measured 147 px below the viewport, while the same journey is visible at 1440x900 with 0 px pre-action distance. The automated click still succeeds because the browser can scroll the locator into view, so transition acceptance can remain green while a user must move past stacked narrow-page content before inspecting the filtered task.",
-  "hypothesis": "A narrower-page presentation that brings the filtered review-needed task list closer to the review control could reduce first-result discovery friction without changing task-state semantics. This remains a bounded hypothesis rather than an admitted UI change. The similar 147 px signal on find-open-task is excluded from UI attribution because that journey reports landing-page task bounds before search rather than the post-search clickable target.",
+  "friction": "Historical narrow-screen friction is resolved by the accepted current rendered evidence: at 390x844 the review-needed task changed from hidden and 147 px below the viewport to visible with 0 px pre-action distance, while desktop remains visible at 0 px. Transition, destination, state persistence, keyboard, empty/error, and horizontal-overflow checks remain green.",
+  "hypothesis": "The admitted compact narrow-summary experiment was verified by real deployed browser execution: reducing stacked summary height brought the review-needed target into the initial narrow viewport without changing task-state semantics or introducing a material canonical-journey regression.",
   "acceptance_tests": [
-    "If #16 later admits a current-main UI experiment, re-run the real deployed board/review-needed-inspect journey at 390x844 and 1440x900 and compare narrow pre-action target visibility/distance to the persisted accepted baseline/current comparison without inventing a budget.",
-    "Keep transition_success, destination_correct, state_persistence_pass, keyboard_accessibility_pass, and empty_error_state_pass true on both required viewports.",
-    "Preserve search/filter URL synchronization, clear behavior, responsive task cards, canonical Issue destinations, and the read-only sanitized projection boundary.",
-    "Treat clipping_count and overlap_count as diagnostic only until rendered inspection ties them to a visible obstruction; horizontal_overflow_px remains a separate measured signal."
+    "Preserve the historical hidden/147px measurements and the accepted verified visible/0px measurements as immutable evidence-linked records.",
+    "Keep transition_success, destination_correct, state_persistence_pass, keyboard_accessibility_pass, and empty_error_state_pass true on desktop 1440x900 and narrow 390x844.",
+    "Keep horizontal_overflow_px at 0 and treat overlap/clipping counts as diagnostic unless rendered inspection ties them to an obstruction.",
+    "Any future UI change affecting this journey must deploy and re-run real desktop+narrow rendered comparison before changing VERIFIED status."
   ],
   "owner": "Product/UX Lab #59",
-  "next_action": "Keep this finding in DISCOVERY until #16 explicitly admits or defers a fresh current-main experiment. Do not reuse stale PR #68 as implementation evidence; any admitted change must be reimplemented on current main, independently reviewed, deployed, and measured at desktop+narrow before classifying the finding improved, regressed, unchanged, or VERIFIED."
+  "next_action": null,
+  "workstream_ref": "Issue:#103",
+  "rendered_e2e_ref": "browser-agent:artifact:10553883989:board/review-needed-inspect:narrow:390x844"
 }
