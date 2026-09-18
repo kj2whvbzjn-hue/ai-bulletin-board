@@ -527,8 +527,11 @@ def project_autonomy(snapshot, repository):
             "waiting_reason": row["waiting_reason"],
         }
         for row in queue
-        if row["next_class"] == "idle/human-required"
-        and row["waiting_reason"] == "human-required decision"
+        if row["waiting_reason"] in {
+            "human-required decision",
+            "repeated lease reclaim churn",
+            "history_unsafe",
+        }
     ]
     return {
         "health": health,
