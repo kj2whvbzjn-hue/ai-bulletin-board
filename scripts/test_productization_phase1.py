@@ -7,14 +7,18 @@ def must_fail(fn,*a,**k):
     except (ValueError,KeyError): return
     raise AssertionError("expected fail-closed validation")
 def main():
-    grant=PrincipalGrant.from_mapping({"principal":"octo-app","capabilities":["claim"],"scopes":["role:manager"]})
-    policy={"principals":{"octo-app":{"capabilities":["claim","review"]}}}
-    validate_authorization_policy(policy,[grant])
-    assert event_is_authorized({"actor":"octo-app"},[grant],capability="claim",scope="role:manager",policy=policy)
-    assert not event_is_authorized({"actor":"intruder"},[grant],capability="claim",scope="role:manager",policy=policy)
-    assert not event_is_authorized({"actor":"octo-app"},[grant],capability="claim",scope="role:manager",policy={"principals":{}})
-    escalated=PrincipalGrant.from_mapping({"principal":"octo-app","capabilities":["integrate"],"scopes":["*"]})
-    must_fail(validate_authorization_policy,policy,[escalated])
+    policy={"principals":[{"principal_id":"octo-app","type":"github_app","subject":"app:123","capabilities":["claim","review"]}],"state_effect_grants":[{"principal_id":"octo-app","capability":"claim","task_scope":"role:manager"}]}
+    grants=validate_authorization_policy(policy)
+    grant=grants[0]
+    assert grant.principal=="octo-app" and grant.capabilities==frozenset({"claim"}) and grant.scopes==frozenset({"role:manager"})
+    assert event_is_authorized({"actor":"octo-app"},capability="claim",scope="role:manager",policy=policy)
+    assert not event_is_authorized({"actor":"intruder"},capability="claim",scope="role:manager",policy=policy)
+    unmapped={"principals":policy["principals"],"state_effect_grants":[{"principal_id":"missing","capability":"claim","task_scope":"role:manager"}]}
+    escalated={"principals":policy["principals"],"state_effect_grants":[{"principal_id":"octo-app","capability":"integrate","task_scope":"*"}]}
+    fixed_scope={"principals":policy["principals"],"state_effect_grants":[{"principal_id":"octo-app","capability":"claim","task_scope":"#16"}]}
+    must_fail(validate_authorization_policy,unmapped)
+    must_fail(validate_authorization_policy,escalated)
+    must_fail(validate_authorization_policy,fixed_scope)
     installation={"repository":"example/project","roles":{"manager":101,"review_manager":102}}
     assert resolve_role(installation,"manager")==101
     config={"required_paths":[".github/workflows/core.yml","protocol/core.md"],"deployment_secret_ref":"DEPLOY_TOKEN"}
