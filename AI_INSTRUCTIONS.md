@@ -75,6 +75,14 @@ The GitHub-native `Validate workstream admission` workflow checks newly opened a
 
 CLAIM leaseはGitHub `created_at` から900秒。live ownerはre-CLAIMではなくfresh-keyの `HEARTBEAT` で900秒更新する。競合時はGitHub `created_at`、同時刻ならnumeric comment IDの昇順で決定し、losing claimantは実装を開始しない。
 
+### Pre-mutation fence / expired-task recovery
+
+CLAIM直後だけでなく、branch/file/commit/PRを変更する直前にも対象Issueの全canonical commentsを再取得してreplayする。live winning ownerでない、または `history_unsafe` なら変更しない。branch/commit/PR/CI/PROGRESSはownershipの代替にならない。
+
+expired taskをreclaimしたWorkerは、変更前にcurrent main、open/closed PR、remote branch/commit、base関係、changed paths/scope、exact-head checks/reviews、canonical artifact refsをGitHub-nativeに探索し、候補をexact SHAで固定する。その後 `RESUME-EXACT` / `SYNCHRONIZE` / `ABANDON` / `FRESH-RESTART` のいずれかをcanonical PROGRESSへ記録する。探索不完全、候補衝突、base/scope ambiguity、permission failureはHuman Requiredとして停止する。
+
+旧executionが追加write不能と確認できない限り、旧branchへ直接継続せず新owner-generation branchを使う。expired ownerの後発activityはleaseを更新しない。詳細はcurrent-main `WORKER_BOOTSTRAP.md` のsafe-reclaim sectionに従う。この運用はprotocol v1 / `LEASE_SECONDS=900` / HEARTBEAT-only renewal semanticsを変更しない。
+
 ### HEARTBEAT example
 
 ```text
