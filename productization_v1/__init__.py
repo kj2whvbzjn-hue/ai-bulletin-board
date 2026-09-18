@@ -6,6 +6,8 @@ from .core import (
     event_is_authorized,
     package_manifest,
     plan_single_repo_reconcile,
+    resolve_role,
+    validate_persisted_input,
 )
 
 __all__ = [
@@ -15,4 +17,6 @@ __all__ = [
     "event_is_authorized",
     "package_manifest",
     "plan_single_repo_reconcile",
+    "resolve_role",
+    "validate_persisted_input",
 ]
