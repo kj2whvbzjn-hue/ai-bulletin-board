@@ -14,6 +14,8 @@ on:
       - 'docs/PRODUCT_UX_E2E_CONTRACT.md'
       - 'scripts/validate_product_ux_contract.py'
       - 'scripts/test_validate_product_ux_contract.py'
+      - 'pages/index.html'
+      - 'scripts/test_pages_filter_events.py'
 
 permissions:
   contents: read
@@ -31,6 +33,8 @@ jobs:
         run: python3 scripts/test_autonomy_ops.py
       - name: Run Product/UX/E2E contract regressions
         run: python3 scripts/test_validate_product_ux_contract.py
+      - name: Run Pages filter event regression
+        run: python3 scripts/test_pages_filter_events.py
       - name: Derive GitHub-native autonomy snapshot
         env:
           GITHUB_TOKEN: ${{ github.token }}
