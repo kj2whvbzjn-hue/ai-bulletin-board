@@ -21,7 +21,21 @@ REQUIRED_PROPOSAL_FIELDS = (
 )
 
 
-def evaluate_rule_proposal(proposal: dict, votes: list[dict], *, quorum: int = 3) -> dict:
+def evaluate_rule_proposal(
+    proposal: dict,
+    votes: list[dict],
+    *,
+    quorum: int = 3,
+    eligible_voters=None,
+    producer_voter: str | None = None,
+    conflicted_voters=None,
+) -> dict:
+    """Evaluate ordinary votes against trusted voter-eligibility context.
+
+    eligible_voters, producer_voter, and conflicted_voters are authority inputs,
+    not proposal-controlled metadata. Missing/invalid eligibility context fails
+    closed so arbitrary voter strings cannot manufacture quorum or majority.
+    """
     action = proposal.get("action")
     proposal_id = str(proposal.get("proposal_id") or "")
     touches = set(map(str, proposal.get("touches_invariants") or []))
@@ -39,25 +53,36 @@ def evaluate_rule_proposal(proposal: dict, votes: list[dict], *, quorum: int = 3
     if action not in ACTIONS or not proposal_id or missing:
         return _result(
             proposal_id, action, "HUMAN_REQUIRED", "invalid_or_ambiguous_proposal",
-            protected, 0, 0, 0, [], missing,
+            protected, 0, 0, 0, [], [], missing, 0, "",
         )
     if weakens & PROTECTED:
         return _result(
             proposal_id, action, "HUMAN_REQUIRED", "protected_invariant_change",
-            protected, 0, 0, 0, [], [],
+            protected, 0, 0, 0, [], [], [], 0, "",
         )
 
-    producer = str(proposal.get("producer_voter") or "")
-    conflicted_voters = set(map(str, proposal.get("conflicted_voters") or []))
-    excluded = set(filter(None, conflicted_voters | ({producer} if producer else set())))
+    eligible = {str(v) for v in (eligible_voters or []) if str(v)}
+    producer = str(producer_voter or "")
+    conflicted = {str(v) for v in (conflicted_voters or []) if str(v)}
+    if not eligible or not producer or producer not in eligible:
+        return _result(
+            proposal_id, action, "HUMAN_REQUIRED", "missing_voter_eligibility_context",
+            protected, 0, 0, 0, [], [], [], len(eligible), producer,
+        )
+
+    excluded = {producer} | conflicted
     by_voter: dict[str, str] = {}
     conflict = False
+    invalid_voters: set[str] = set()
 
     for vote in votes:
         voter = str(vote.get("voter") or "")
         choice = vote.get("vote")
         if not voter or choice not in VOTES:
             conflict = True
+            continue
+        if voter not in eligible:
+            invalid_voters.add(voter)
             continue
         if vote.get("conflicted") is True or voter in excluded:
             excluded.add(voter)
@@ -70,7 +95,9 @@ def evaluate_rule_proposal(proposal: dict, votes: list[dict], *, quorum: int = 3
     approve = sum(v == "APPROVE" for v in by_voter.values())
     reject = sum(v == "REJECT" for v in by_voter.values())
     voters = len(by_voter)
-    if conflict:
+    if invalid_voters:
+        status, reason = "HUMAN_REQUIRED", "ineligible_or_invalid_vote"
+    elif conflict:
         status, reason = "HUMAN_REQUIRED", "conflicting_or_invalid_vote"
     elif voters < quorum:
         status, reason = "HUMAN_REQUIRED", "no_quorum"
@@ -83,13 +110,14 @@ def evaluate_rule_proposal(proposal: dict, votes: list[dict], *, quorum: int = 3
 
     return _result(
         proposal_id, action, status, reason, protected, voters, approve, reject,
-        sorted(excluded), [],
+        sorted(excluded), sorted(invalid_voters), [], len(eligible), producer,
     )
 
 
 def _result(
     proposal_id, action, status, reason, protected, voters, approve, reject,
-    excluded_voters, missing_fields,
+    excluded_voters, ineligible_voters, missing_fields, eligible_voter_count,
+    producer_voter,
 ):
     return {
         "schema": "ai-bb-rule-governance:v1",
@@ -101,7 +129,10 @@ def _result(
         "distinct_voter_count": voters,
         "approve_count": approve,
         "reject_count": reject,
+        "eligible_voter_count": eligible_voter_count,
+        "producer_voter": producer_voter,
         "excluded_voters": excluded_voters,
+        "ineligible_voters": ineligible_voters,
         "missing_fields": missing_fields,
         "effective": False,
         "merge_requirement": "independent exact-head review + Git merge",
@@ -119,22 +150,28 @@ def project_rule_change_ledger(
     no_dangling_refs: bool | None = None,
 ) -> dict:
     """Project the auditable post-merge state without mutating any rule."""
+    proposal_id = str(proposal.get("proposal_id") or "")
+    decision_proposal_id = str(decision.get("proposal_id") or "")
     action = proposal.get("action")
     base = {
         "schema": "ai-bb-rule-change-ledger:v1",
-        "proposal_id": str(proposal.get("proposal_id") or ""),
+        "proposal_id": proposal_id,
+        "decision_proposal_id": decision_proposal_id,
         "action": action,
         "decision_status": decision.get("status"),
         "distinct_voter_count": decision.get("distinct_voter_count", 0),
         "approve_count": decision.get("approve_count", 0),
         "reject_count": decision.get("reject_count", 0),
         "excluded_voters": list(decision.get("excluded_voters") or []),
+        "ineligible_voters": list(decision.get("ineligible_voters") or []),
         "exact_merged_sha": merged_sha,
         "effective_rule": effective_rule,
         "superseded_rule": superseded_rule,
         "evidence_freshness": evidence_freshness,
         "effective": False,
     }
+    if not proposal_id or decision_proposal_id != proposal_id:
+        return {**base, "status": "HUMAN_REQUIRED", "reason": "proposal_decision_mismatch"}
     if decision.get("status") != "ACCEPTED_PENDING_REVIEWED_MERGE":
         return {**base, "status": decision.get("status"), "reason": "proposal_not_accepted"}
     if not merged_sha or not re.fullmatch(r"[0-9a-f]{40}", merged_sha):
