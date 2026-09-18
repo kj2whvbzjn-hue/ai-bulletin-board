@@ -187,6 +187,7 @@ def replay(issue, comments, now):
     reclaim_ref = ""
     reclaim_at = None
     reclaim_count = 0
+    awaiting_reclaim = False
     last_owner_activity_at = None
     owner_next_action = ""
     released = False
@@ -198,12 +199,13 @@ def replay(issue, comments, now):
     seen_heads = set()
 
     def expire_current(expired_at):
-        nonlocal owner, expiry, current_claim_ref, current_claim_at
+        nonlocal owner, expiry, current_claim_ref, current_claim_at, awaiting_reclaim
         nonlocal prior_expired_owner, prior_expired_claim_ref, prior_expired_at
         if owner is not None:
             prior_expired_owner = owner
             prior_expired_claim_ref = current_claim_ref
             prior_expired_at = expired_at
+            awaiting_reclaim = True
         owner = None
         expiry = None
         current_claim_ref = ""
@@ -242,10 +244,11 @@ def replay(issue, comments, now):
 
         if typ == "CLAIM":
             if not live and not completed:
-                if prior_expired_owner:
+                if awaiting_reclaim:
                     reclaim_count += 1
                     reclaim_ref = _comment_ref(cid)
                     reclaim_at = created
+                    awaiting_reclaim = False
                 owner = p["agent_id"]
                 current_claim_ref = _comment_ref(cid)
                 current_claim_at = created
