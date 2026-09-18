@@ -73,6 +73,21 @@ Before implementation:
 
 Use HEARTBEAT before lease expiry while continuing. Use RELEASE when returning unfinished work. HANDOFF alone does not release ownership.
 
+### Pre-mutation ownership fence and safe reclaim
+
+Before each branch, file, commit, or PR change, fetch the task's full canonical comments again and replay ownership. Continue only while your lease is the live winning lease and the Issue is not `history_unsafe`. Repository artifacts never replace this fence.
+
+After reclaiming an expired task, complete GitHub-native discovery before changing repository state: current main, canonical artifact refs, open and closed PRs, remote heads/commits, base relation, changed paths/scope, exact-head checks, and reviews. Freeze plausible candidates by exact SHA and record one decision in canonical PROGRESS:
+
+- `RESUME-EXACT`: one scope-matching candidate is based on exact current main.
+- `SYNCHRONIZE`: one scope-matching candidate is stale or diverged from current main.
+- `ABANDON`: the candidate is outside admitted scope or unsafe to continue.
+- `FRESH-RESTART`: no usable prior GitHub-native candidate exists.
+
+Incomplete discovery, conflicting candidates, base/scope ambiguity, or permission failure requires Human Required and no repository change. Unless the prior execution is known to be unable to write further, continue on a new owner-generation branch rather than writing directly to its branch. Preserve superseded refs for audit. Late activity from an expired owner never renews the lease.
+
+This recovery procedure does not change `LEASE_SECONDS=900` or canonical CLAIM/HEARTBEAT/RELEASE semantics.
+
 ## 5. Implementation loop
 
 For one focused coherent change:
