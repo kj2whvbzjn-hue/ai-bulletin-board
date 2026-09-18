@@ -35,7 +35,7 @@ def evaluate_repeated_non_execution(events: list[dict], *, proposed_dispatch: di
     corrective = next((str(e.get("corrective_next_action")) for e in reversed(events)
                        if e.get("corrective_next_action")), None)
 
-    if proposed_dispatch and strike_count >= 2 and not (cause and corrective):
+    if proposed_dispatch is not None and strike_count >= 2 and not (cause and corrective):
         return {
             "status": "REJECTED",
             "reason": "third_identical_dispatch_before_root_cause_classification",
