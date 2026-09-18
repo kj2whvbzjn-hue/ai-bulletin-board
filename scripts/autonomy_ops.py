@@ -24,8 +24,11 @@ HUMAN_RE = re.compile(r"(?i)\b(?:human required|human owner|owner decision|requi
 FAIL_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "startup_failure"}
 
 SAFE_TASK_FIELDS = (
-    "task", "state", "agent", "lease_status", "review_needed", "current_head",
-    "next_action", "next_class", "waiting_reason",
+    "task", "state", "agent", "lease_status", "recovery_status",
+    "claim_ref", "lease_started_at", "prior_owner", "prior_claim_ref",
+    "prior_lease_expires_at", "reclaim_ref", "reclaim_at",
+    "last_owner_activity_at", "reclaim_count",
+    "review_needed", "current_head", "next_action", "next_class", "waiting_reason",
 )
 SAFE_REVIEW_FIELDS = ("pr", "head", "review_needed", "review_count", "stale_review_count")
 SAFE_HEALTH_FIELDS = (
@@ -219,6 +222,8 @@ def reconcile_task_review(row, entry):
 def classify_task(row, main_status):
     state = row.get("state") or "open"
     next_action = row.get("next_action") or ""
+    recovery = row.get("recovery_status") or ""
+    reclaim_count = int(row.get("reclaim_count") or 0)
     if state == "history_unsafe":
         return "broken-main/security", "history_unsafe"
     if HUMAN_RE.search(next_action):
@@ -226,7 +231,15 @@ def classify_task(row, main_status):
     if main_status == "MAIN_RED":
         return "broken-main/security", "required current-main check is red"
     if state == "claimed":
+        if recovery == "reclaimed":
+            return "live-claim", "reclaimed after prior lease expiry"
+        if recovery == "expiring":
+            return "live-claim", "lease expiring"
         return "live-claim", row.get("lease_status") or "active claim"
+    if recovery == "expired_unreclaimed":
+        if reclaim_count >= 2:
+            return "idle/human-required", "repeated lease reclaim churn"
+        return "implementation-ready", "lease expired; autonomous safe reclaim available"
     if row.get("current_head") and row.get("review_needed"):
         return "review-needed", "current exact head lacks independent review"
     if row.get("current_head"):
@@ -241,6 +254,23 @@ def derive(tasks, review_meta, main_status, duplicate_keys):
     for row in tasks:
         next_class, reason = classify_task(row, main_status)
         safe = {k: row.get(k, "") for k in SAFE_TASK_FIELDS if k not in {"next_class", "waiting_reason"}}
+        recovery = row.get("recovery_status") or ""
+        reclaim_count = int(row.get("reclaim_count") or 0)
+        if recovery == "expired_unreclaimed":
+            if reclaim_count >= 2:
+                safe["next_action"] = (
+                    "Human Owner must inspect repeated lease reclaim churn and GitHub-native "
+                    "candidate history before another reclaim."
+                )
+            else:
+                safe["next_action"] = (
+                    "Fresh-CLAIM/replay this task, then discover prior GitHub-native branches, "
+                    "commits, open/closed PRs, checks, reviews, and artifacts before any mutation."
+                )
+        elif row.get("state") == "history_unsafe":
+            safe["next_action"] = (
+                "Human Owner must create a new canonical Issue; do not continue this history_unsafe task."
+            )
         safe["next_class"] = next_class
         safe["waiting_reason"] = reason
         queue.append(safe)
@@ -255,9 +285,13 @@ def derive(tasks, review_meta, main_status, duplicate_keys):
         "duplicate_workstream_violation": bool(duplicate_keys),
         "review_storm": any(x["review_count"] > 1 for x in review_meta),
         "stale_review": any(x["stale_review_count"] > 0 for x in review_meta),
-        "stale_or_expiring_claim": any(x.get("lease_status") in {"stale", "expiring"} for x in tasks),
+        "stale_or_expiring_claim": any(
+            x.get("lease_status") in {"stale", "expiring"}
+            or x.get("recovery_status") == "expired_unreclaimed"
+            for x in tasks
+        ),
         "history_unsafe": any(x.get("state") == "history_unsafe" for x in tasks),
-        "human_required": any(HUMAN_RE.search(x.get("next_action") or "") for x in tasks),
+        "human_required": any(x.get("next_class") == "idle/human-required" for x in queue),
     }
     return {
         "schema": "ai-bb-autonomy:v1",
