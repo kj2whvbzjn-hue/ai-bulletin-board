@@ -70,7 +70,7 @@ def main() -> None:
     abort = plan_single_repo_reconcile(installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign", "collision_action": "abort"}])
     assert adopt[0]["op"] == "adopt"
     assert abort[0]["op"] == "abort"
-    assert adopt[0]["resource_id"] == abort[0]["resource_id"]\n    must_fail(plan_single_repo_reconcile, installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign", "collision_action": "abort"}])
+    assert adopt[0]["resource_id"] == abort[0]["resource_id"]\n    must_fail(plan_single_repo_reconcile, installation, {"required_paths": ["legacy.yml"]}, [{"path": "legacy.yml", "ownership": "foreign"}])
 
     # Inputs use symbolic roles/repository identity, never fixed control Issue identity or historical title prefixes.
     assert "#" not in repr(installation)
