@@ -291,7 +291,14 @@ def derive(tasks, review_meta, main_status, duplicate_keys):
             for x in tasks
         ),
         "history_unsafe": any(x.get("state") == "history_unsafe" for x in tasks),
-        "human_required": any(x.get("next_class") == "idle/human-required" for x in queue),
+        "human_required": any(
+            x.get("waiting_reason") in {
+                "human-required decision",
+                "repeated lease reclaim churn",
+                "history_unsafe",
+            }
+            for x in queue
+        ),
     }
     return {
         "schema": "ai-bb-autonomy:v1",
