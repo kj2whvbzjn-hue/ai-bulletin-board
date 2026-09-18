@@ -20,59 +20,98 @@ BASE = {
     "acceptance_evidence": ["regression:test"],
     "touches_invariants": ["ordinary"],
 }
+ELIGIBLE = {"producer", "a", "b", "c", "d"}
 votes = [
     {"voter": "a", "vote": "APPROVE"},
     {"voter": "b", "vote": "APPROVE"},
     {"voter": "c", "vote": "REJECT"},
 ]
-out = evaluate_rule_proposal(BASE, votes)
+
+
+def evaluate(proposal, ballot, *, conflicted_voters=None):
+    return evaluate_rule_proposal(
+        proposal,
+        ballot,
+        eligible_voters=ELIGIBLE,
+        producer_voter="producer",
+        conflicted_voters=conflicted_voters or set(),
+    )
+
+
+out = evaluate(BASE, votes)
 assert out["status"] == "ACCEPTED_PENDING_REVIEWED_MERGE"
 assert out["distinct_voter_count"] == 3 and out["effective"] is False
+assert out["eligible_voter_count"] == 5 and out["producer_voter"] == "producer"
 
-assert evaluate_rule_proposal(BASE, votes[:2])["reason"] == "no_quorum"
+assert evaluate(BASE, votes[:2])["reason"] == "no_quorum"
 tie = votes + [{"voter": "d", "vote": "REJECT"}]
-assert evaluate_rule_proposal(BASE, tie)["reason"] == "tie"
+assert evaluate(BASE, tie)["reason"] == "tie"
 conflict = votes + [{"voter": "a", "vote": "REJECT"}]
-assert evaluate_rule_proposal(BASE, conflict)["reason"] == "conflicting_or_invalid_vote"
+assert evaluate(BASE, conflict)["reason"] == "conflicting_or_invalid_vote"
 
 protected = {**BASE, "proposal_id": "rp-2", "action": "RETIRE", "weakens_invariants": ["security"]}
-assert evaluate_rule_proposal(protected, votes)["reason"] == "protected_invariant_change"
+assert evaluate(protected, votes)["reason"] == "protected_invariant_change"
 
 rejected = [
     {"voter": "a", "vote": "REJECT"},
     {"voter": "b", "vote": "REJECT"},
     {"voter": "c", "vote": "APPROVE"},
 ]
-assert evaluate_rule_proposal(BASE, rejected)["status"] == "REJECTED"
+assert evaluate(BASE, rejected)["status"] == "REJECTED"
 
-# Producer/conflicted voters are excluded from quorum and majority.
-excluded_proposal = {
-    **BASE,
-    "proposal_id": "rp-excluded",
-    "producer_voter": "producer",
-    "conflicted_voters": ["conflicted"],
-}
-excluded_votes = [
+# Voter authority context is mandatory and fail-closed.
+missing_context = evaluate_rule_proposal(BASE, votes)
+assert missing_context["status"] == "HUMAN_REQUIRED"
+assert missing_context["reason"] == "missing_voter_eligibility_context"
+
+missing_producer = evaluate_rule_proposal(
+    BASE,
+    votes,
+    eligible_voters=ELIGIBLE,
+)
+assert missing_producer["reason"] == "missing_voter_eligibility_context"
+
+bad_producer = evaluate_rule_proposal(
+    BASE,
+    votes,
+    eligible_voters={"a", "b", "c"},
+    producer_voter="producer",
+)
+assert bad_producer["reason"] == "missing_voter_eligibility_context"
+
+outsider_votes = votes + [{"voter": "outsider", "vote": "APPROVE"}]
+outsider = evaluate(BASE, outsider_votes)
+assert outsider["status"] == "HUMAN_REQUIRED"
+assert outsider["reason"] == "ineligible_or_invalid_vote"
+assert outsider["ineligible_voters"] == ["outsider"]
+
+# Producer/conflicted voters are excluded from quorum and majority using
+# trusted context, not proposal-controlled metadata.
+producer_ballot = [
     {"voter": "producer", "vote": "APPROVE"},
-    {"voter": "conflicted", "vote": "APPROVE"},
     {"voter": "a", "vote": "APPROVE"},
     {"voter": "b", "vote": "APPROVE"},
     {"voter": "c", "vote": "REJECT"},
 ]
-excluded_out = evaluate_rule_proposal(excluded_proposal, excluded_votes)
-assert excluded_out["status"] == "ACCEPTED_PENDING_REVIEWED_MERGE"
-assert excluded_out["distinct_voter_count"] == 3
-assert excluded_out["excluded_voters"] == ["conflicted", "producer"]
+producer_out = evaluate(BASE, producer_ballot)
+assert producer_out["status"] == "ACCEPTED_PENDING_REVIEWED_MERGE"
+assert producer_out["distinct_voter_count"] == 3
+assert "producer" in producer_out["excluded_voters"]
+
+conflicted_ballot = votes + [{"voter": "d", "vote": "APPROVE"}]
+conflicted_out = evaluate(BASE, conflicted_ballot, conflicted_voters={"d"})
+assert conflicted_out["distinct_voter_count"] == 3
+assert "d" in conflicted_out["excluded_voters"]
 
 flagged_votes = votes + [{"voter": "d", "vote": "APPROVE", "conflicted": True}]
-flagged_out = evaluate_rule_proposal(BASE, flagged_votes)
+flagged_out = evaluate(BASE, flagged_votes)
 assert flagged_out["distinct_voter_count"] == 3
-assert flagged_out["excluded_voters"] == ["d"]
+assert "d" in flagged_out["excluded_voters"]
 
 # Proposal metadata is fail-closed rather than silently inferred.
 malformed = {**BASE}
 del malformed["acceptance_evidence"]
-assert evaluate_rule_proposal(malformed, votes)["reason"] == "invalid_or_ambiguous_proposal"
+assert evaluate(malformed, votes)["reason"] == "invalid_or_ambiguous_proposal"
 
 # Incident-derived ADD demonstration.
 incident_add = incident_add_proposal(
@@ -83,7 +122,7 @@ incident_add = incident_add_proposal(
     affected_version="v2",
     evidence_ref="Issue:#16:5731425425",
 )
-incident_decision = evaluate_rule_proposal(incident_add, votes)
+incident_decision = evaluate(incident_add, votes)
 assert incident_add["action"] == "ADD" and incident_add["trigger"] == "incident"
 assert incident_decision["status"] == "ACCEPTED_PENDING_REVIEWED_MERGE"
 
@@ -97,7 +136,7 @@ retire = stale_rule_retire_proposal(
     affected_version="v1",
     evidence_ref=finding["evidence_refs"][0],
 )
-retire_decision = evaluate_rule_proposal(retire, votes)
+retire_decision = evaluate(retire, votes)
 blocked_retire = project_rule_change_ledger(
     retire,
     retire_decision,
@@ -117,7 +156,8 @@ retired = project_rule_change_ledger(
 )
 assert retired["status"] == "RETIRED" and retired["effective"] is True
 
-# Post-merge effective-rule ledger requires exact immutable merge evidence.
+# Post-merge effective-rule ledger requires exact immutable merge evidence and
+# binds the decision to the same proposal identity.
 ledger = project_rule_change_ledger(
     BASE,
     out,
@@ -128,9 +168,32 @@ ledger = project_rule_change_ledger(
 )
 assert ledger["status"] == "EFFECTIVE" and ledger["effective"] is True
 assert ledger["exact_merged_sha"] == "a" * 40
+assert ledger["proposal_id"] == ledger["decision_proposal_id"] == "rp-1"
 assert ledger["effective_rule"] == "ordinary/example@v2"
 assert ledger["superseded_rule"] == "ordinary/example@v1"
 assert ledger["evidence_freshness"] == "current-main"
+
+wrong_decision = {**out, "proposal_id": "rp-other"}
+mismatch = project_rule_change_ledger(
+    BASE,
+    wrong_decision,
+    merged_sha="a" * 40,
+    effective_rule="ordinary/example@v2",
+    evidence_freshness="current-main",
+)
+assert mismatch["status"] == "HUMAN_REQUIRED"
+assert mismatch["reason"] == "proposal_decision_mismatch"
+assert mismatch["effective"] is False
+
+missing_decision_id = {**out}
+del missing_decision_id["proposal_id"]
+assert project_rule_change_ledger(
+    BASE,
+    missing_decision_id,
+    merged_sha="a" * 40,
+    effective_rule="ordinary/example@v2",
+    evidence_freshness="current-main",
+)["reason"] == "proposal_decision_mismatch"
 
 missing_merge = project_rule_change_ledger(
     BASE,
