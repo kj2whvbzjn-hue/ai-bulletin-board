@@ -26,7 +26,9 @@ on:
       - 'scripts/gap_scan.py'
       - 'scripts/test_gap_scan.py'
       - 'scripts/evidence_action_gate.py'
-      - 'scripts/test_evidence_action_gate.py'\n      - 'scripts/rule_governance.py'\n      - 'scripts/test_rule_governance.py'
+      - 'scripts/test_evidence_action_gate.py'
+      - 'scripts/rule_governance.py'
+      - 'scripts/test_rule_governance.py'
 
 permissions:
   contents: read
@@ -64,7 +66,10 @@ jobs:
       - name: Run Productization Phase-1 core regressions
         id: productization_phase1_regressions
         run: python3 scripts/test_productization_phase1.py
-      - name: Run rule governance regressions\n        id: rule_governance_regressions\n        run: python3 scripts/test_rule_governance.py\n      - name: Run standing GAP_SCAN regressions
+      - name: Run rule governance regressions
+        id: rule_governance_regressions
+        run: python3 scripts/test_rule_governance.py
+      - name: Run standing GAP_SCAN regressions
         id: gap_scan_regressions
         run: python3 scripts/test_gap_scan.py
       - name: Derive GitHub-native autonomy snapshot
